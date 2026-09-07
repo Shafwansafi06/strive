@@ -1,0 +1,51 @@
+{
+  "created_utc": "2026-09-07T11:08:06.680415+00:00",
+  "scope": "Engineering fixtures only; not a detector accuracy evaluation",
+  "python": "3.12.13",
+  "platform": "Linux-6.18.35-x86_64-with-glibc2.39",
+  "scenarios": {
+    "steady": {
+      "windows": 39,
+      "bootstrap": "trusted",
+      "last_risk": 4.9741428255480066e-05,
+      "profile_entries": 39,
+      "first_warning_s": null,
+      "first_alert_s": null,
+      "p50_ms": 6.804,
+      "p95_ms": 9.481600000000004
+    },
+    "switch": {
+      "windows": 39,
+      "bootstrap": "trusted",
+      "last_risk": 0.8055478693688962,
+      "profile_entries": 17,
+      "first_warning_s": 22.0,
+      "first_alert_s": 36.0,
+      "p50_ms": 6.612,
+      "p95_ms": 8.751199999999999
+    },
+    "suspicious_start": {
+      "windows": 39,
+      "bootstrap": "blocked",
+      "last_risk": 0.7289861080914787,
+      "profile_entries": 0,
+      "first_warning_s": 4.0,
+      "first_alert_s": 8.0,
+      "p50_ms": 5.941,
+      "p95_ms": 9.454000000000002
+    },
+    "silence": {
+      "windows": 39,
+      "bootstrap": "blocked",
+      "last_risk": null,
+      "profile_entries": 0,
+      "first_warning_s": null,
+      "first_alert_s": null,
+      "p50_ms": 0.031,
+      "p95_ms": 0.06280000000000002
+    }
+  },
+  "neural_inference_tested": false,
+  "speech_accuracy_measured": false,
+  "raw_live_audio_saved": false
+}

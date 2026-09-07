@@ -1,0 +1,14 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+.env
+/models/
+data/*.npz
+data/*.sqlite3*
+data/audio/
+*.wav
+*.flac
+*.mp3
+*.zip
+*.tar.gz

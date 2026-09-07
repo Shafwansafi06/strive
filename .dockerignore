@@ -1,0 +1,10 @@
+.git
+.venv
+__pycache__
+.pytest_cache
+/models
+data/*.sqlite3*
+data/audio
+evidence
+STRIVE_Demo.html
+*.zip

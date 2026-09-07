@@ -1,0 +1,17 @@
+[
+  {
+    "name": "VoiceGuard_PRD_SIH26104.docx",
+    "sha256": "00d0f1018969555c25d1e2de1b2c672855c4cff9e29ae0fb189d8c9314f8cb03",
+    "role": "MVP requirements only; architecture excluded"
+  },
+  {
+    "name": "STRIVE_architecture_detailed_1 1(1).pdf",
+    "sha256": "c756807788094e049a15a40cd5cfe1974fe96db49cd71c2a74c44548deecc6af",
+    "role": "STRIVE architecture source"
+  },
+  {
+    "name": "STRIVE_Architecture_Document(1).md",
+    "sha256": "0f4e6e6c3dc1d1baf3052d75c1468f918eaf4d317ab32b1180447d1d0ff0c72e",
+    "role": "STRIVE architecture source"
+  }
+]

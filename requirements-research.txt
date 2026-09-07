@@ -1,0 +1,9 @@
+# Optional runtime for frozen exports; checkpoint downloads are separate.
+-r requirements-demo.lock
+torch==2.6.0
+torchaudio==2.6.0
+transformers==4.51.3
+huggingface-hub==0.31.1
+safetensors==0.5.3
+speechbrain==1.0.2
+webrtcvad-wheels==2.0.14

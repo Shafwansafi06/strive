@@ -1,0 +1,9 @@
+{
+  "mode": "research",
+  "device": "cpu",
+  "model_dir": "models",
+  "index_path": "data/reference.npz",
+  "audit_path": "data/audit.sqlite3",
+  "profile_backend": "acoustic",
+  "min_partition_entries": 20
+}

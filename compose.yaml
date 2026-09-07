@@ -1,0 +1,14 @@
+services:
+  strive:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    environment:
+      STRIVE_API_TOKEN: "${STRIVE_API_TOKEN:?Set STRIVE_API_TOKEN before starting Compose}"
+    tmpfs:
+      - /tmp:size=64m
+    volumes:
+      - audit:/app/data
+    restart: unless-stopped
+volumes:
+  audit:

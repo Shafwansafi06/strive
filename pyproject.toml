@@ -1,0 +1,9 @@
+[project]
+name = "strive-mvp"
+version = "0.2.0"
+description = "A runnable STRIVE streaming architecture prototype for SIH 26104"
+requires-python = ">=3.12,<3.13"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

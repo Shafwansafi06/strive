@@ -1,0 +1,10 @@
+{
+  "processor_contract": "PASS",
+  "transformers": "4.51.3",
+  "scope": "Local software fixture, no pretrained inference",
+  "text_phonemizer_required": false,
+  "input_shape": [
+    1,
+    32000
+  ]
+}

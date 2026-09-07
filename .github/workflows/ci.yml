@@ -1,0 +1,19 @@
+name: Architecture checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: pip install -r requirements-demo.lock
+      - run: python -m pytest -q
+      - run: node --check web/app.js && node --check web/pcm-worklet.js
+      - run: node tests/audio_worklet.cjs
+      - run: python scripts/build_demo.py
+      - run: python scripts/package_release.py --output /tmp/STRIVE_MVP.zip --verify

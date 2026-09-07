@@ -1,0 +1,16 @@
+INFO:     Started server process [8]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8029 (Press CTRL+C to quit)
+STRIVE dashboard: http://127.0.0.1:8029
+INFO:     127.0.0.1:48074 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48076 - "GET /health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48088 - "POST /v1/demo/switch HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48100 - "POST /v1/calls/53ff7c35866e426c8a82d3f8829752b8/transaction HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48112 - "POST /v1/calls/53ff7c35866e426c8a82d3f8829752b8/verify HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48120 - "POST /v1/calls/53ff7c35866e426c8a82d3f8829752b8/transaction HTTP/1.1" 200 OK
+INFO:     127.0.0.1:48124 - "DELETE /v1/calls/53ff7c35866e426c8a82d3f8829752b8 HTTP/1.1" 200 OK
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+INFO:     Finished server process [8]

@@ -187,7 +187,7 @@ class ResearchExtractor:
         return unit(np.concatenate(vectors)), {"profile_kind": "vox", "vox_traits": len(vectors)}
 
     def extract(self, waveform: np.ndarray) -> Features:
-        """Return actual frozen-model features for exactly one 16 kHz 2-s window."""
+        """Return actual frozen-model features for exactly one 16 kHz window (cfg.window_s seconds)."""
         raw = np.asarray(waveform, dtype=np.float32)
         if raw.shape != (self.window_samples,) or not np.isfinite(raw).all() or np.max(np.abs(raw)) > 1.01:
             raise ValueError(f"Research input must be {self.window_samples} finite normalized mono float samples")

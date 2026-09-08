@@ -1,5 +1,5 @@
 """Typed runtime and experiment settings; core requires only the standard library."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import os
 from pathlib import Path
@@ -9,8 +9,8 @@ from pathlib import Path
 class Settings:
     mode: str = "demo"
     sample_rate: int = 16000
-    window_s: int = 2
-    stride_s: int = 1
+    window_s: float = 2.0
+    stride_s: float = 1.0
     bootstrap_s: int = 5
     min_voiced_s: float = 4.0
     global_k: int = 20
@@ -35,18 +35,36 @@ class Settings:
     weight_preset: str = "proposed"
     raise_model_errors: bool = False
     api_token: str = ""
+    # CH-06 heuristic constants; overrides merge onto DEFAULT_QUALITY_WEIGHTS.
+    channel_quality_weights: dict = field(default_factory=dict)
+    # SCH-01 branch cadences in milliseconds of AUDIO time; merges onto
+    # scheduler.DEFAULT_CADENCE_MS. Empty means run every branch every window.
+    branch_cadence_ms: dict = field(default_factory=dict)
+    multi_rate: bool = False
+    # AUD-04 bounded capture queue, in completed windows.
+    capture_queue_windows: int = 8
 
     def __post_init__(self) -> None:
         if self.weight_preset not in ("equal", "proposed", "global_heavy", "session_heavy"):
             raise ValueError("Unknown weight preset")
         if self.mode not in ("demo", "research"):
             raise ValueError("mode must be demo or research")
-        if (self.sample_rate, self.window_s, self.stride_s) != (16000, 2, 1):
-            raise ValueError("This build implements the STRIVE 16 kHz / 2 s / 1 s contract")
+        if self.sample_rate != 16000:
+            raise ValueError("This build implements the STRIVE 16 kHz canonical contract")
+        # Window and hop are configurable; both must land on whole samples so the
+        # ring buffer stays sample-accurate and window timestamps stay exact.
+        if not 0 < self.stride_s <= self.window_s:
+            raise ValueError("Require 0 < stride_s <= window_s")
+        for name in ("window_s", "stride_s"):
+            samples = getattr(self, name) * self.sample_rate
+            if abs(samples - round(samples)) > 1e-9 or round(samples) < 1:
+                raise ValueError(f"{name} must be a positive whole number of samples at 16 kHz")
         if not 0 <= self.alpha < 1 or not 0 < self.warning < self.alert <= 1:
             raise ValueError("Invalid EMA or alert thresholds")
         if not 0 < self.global_gate < 1 or not 0 < self.similarity_gate < 1:
             raise ValueError("Invalid bootstrap/update gate")
+        if self.capture_queue_windows < 1:
+            raise ValueError("capture_queue_windows must be at least 1")
         if min(self.global_k, self.session_k, self.max_session_entries, self.max_sessions) < 1:
             raise ValueError("Counts must be positive")
 

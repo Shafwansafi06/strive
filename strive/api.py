@@ -62,7 +62,8 @@ def pcm(frame):
 def create_app(settings=None, extractor=None, index=None):
     cfg = settings or Settings.from_env()
     sessions, locks = {}, {}
-    stats = {"windows": 0, "errors": 0, "total_ms": 0., "overruns": 0}
+    stats = {"windows": 0, "errors": 0, "total_ms": 0., "queue_ms": 0., "overruns": 0,
+             "dropped_windows": 0, "dropped_events": 0}
 
     @asynccontextmanager
     async def lifespan(app):
@@ -151,8 +152,9 @@ def create_app(settings=None, extractor=None, index=None):
         for e in events:
             app.state.audit.write(e["call_id"], "risk.updated", e)
             stats["windows"] += 1
-            stats["total_ms"] += e["latency_ms"]
-            stats["overruns"] += e["latency_ms"] > 1000
+            stats["total_ms"] += e["latency_ms"]["end_to_end"]
+            stats["queue_ms"] += e["latency_ms"]["queue"]
+            stats["overruns"] += "COMPUTE_EXCEEDS_STRIDE" in e["reasons"]
             stats["errors"] += "MODEL_OR_INDEX_ERROR" in e["reasons"]
         return events
 
@@ -313,6 +315,7 @@ def create_app(settings=None, extractor=None, index=None):
                 return
             call = get_call(key)
             await ws.send_json({"type": "ready", "sample_rate": RATE})
+
             while True:
                 message = await asyncio.wait_for(ws.receive_text(), timeout=cfg.idle_timeout_s)
                 if len(message) > 88000:
@@ -324,8 +327,14 @@ def create_app(settings=None, extractor=None, index=None):
                     await ws.send_json({"type": "gap", "state": "analyzing"})
                     continue
                 frame = PCMFrame.model_validate(obj)
+                # AUD-04: ingest and drain are separate inside the engine and both
+                # run off the event loop, so the socket is never blocked by a model
+                # for longer than one drain. The bounded queue absorbs the rest and
+                # reports what it discarded.
                 events = await process(call, pcm(frame), frame.sequence)
-                await ws.send_json({"type": "events", "sequence": frame.sequence, "events": events})
+                stats["dropped_windows"] += sum(e.get("dropped_windows", 0) for e in events)
+                await ws.send_json({"type": "events", "sequence": frame.sequence,
+                                    "events": events, "queued": call.capture.depth()})
         except WebSocketDisconnect:
             pass
         except (ValueError, HTTPException, asyncio.TimeoutError):
@@ -346,6 +355,9 @@ def create_app(settings=None, extractor=None, index=None):
     def metrics():
         return (f"strive_active_sessions {len(sessions)}\nstrive_windows_total {stats['windows']}\n"
                 f"strive_errors_total {stats['errors']}\nstrive_latency_ms_sum {stats['total_ms']:.3f}\n"
+                f"strive_queue_ms_sum {stats['queue_ms']:.3f}\n"
+                f"strive_dropped_windows_total {stats['dropped_windows']}\n"
+                f"strive_dropped_events_total {stats['dropped_events']}\n"
                 f"strive_stride_overruns_total {stats['overruns']}\n")
 
     app.mount("/assets", StaticFiles(directory=WEB), name="assets")

@@ -25,8 +25,8 @@ def main():
                 'last_risk':events[-1]['s_risk'], 'profile_entries':events[-1]['profile_entries'],
                 'first_warning_s':next((e['session_age_s'] for e in events if e['alert_level']=='warning'),None),
                 'first_alert_s':next((e['session_age_s'] for e in events if e['alert_level']=='alert'),None),
-                'p50_ms':float(np.percentile([e['latency_ms'] for e in events],50)),
-                'p95_ms':float(np.percentile([e['latency_ms'] for e in events],95))}
+                'p50_ms':float(np.percentile([e['latency_ms']['end_to_end'] for e in events],50)),
+                'p95_ms':float(np.percentile([e['latency_ms']['end_to_end'] for e in events],95))}
             client.delete('/v1/calls/' + record['call_id'])
     report = {'created_utc':datetime.now(timezone.utc).isoformat(), 'scope':'Engineering fixtures only; not a detector accuracy evaluation',
               'python':sys.version.split()[0],'platform':platform.platform(),'scenarios':summary,

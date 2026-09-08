@@ -86,7 +86,7 @@ function display(e, append = true) {
   $('clock').textContent = String(Math.floor(e.session_age_s / 60)).padStart(2, '0') + ':' + String(Math.floor(e.session_age_s % 60)).padStart(2, '0');
   $('call-state').textContent = e.alert_level.toUpperCase(); $('call-state').className = 'tag ' + e.alert_level;
   $('state-detail').textContent = e.s_risk == null ? 'Collecting enough active audio to score.' : e.demo_only ? 'Engineering score · not an authenticity verdict.' : 'Uncalibrated research score · independent verification required.';
-  $('latency').textContent = e.latency_ms.toFixed(1) + ' ms'; $('voiced').textContent = e.voiced_seconds.toFixed(1) + ' s';
+  $('latency').textContent = e.latency_ms.end_to_end.toFixed(1) + ' ms'; $('voiced').textContent = e.voiced_seconds.toFixed(1) + ' s';
   ['global', 'session', 'coherence'].forEach((name, i) => {
     const score = e.track_scores['s_' + name]; $('' + name + '-score').textContent = pct(score);
     $(name + '-bar').value = score ?? 0; $(name + '-weight').textContent = 'w ' + e.weights[i].toFixed(2);

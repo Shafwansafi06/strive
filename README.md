@@ -101,7 +101,12 @@ For network access, put the app behind your organization's authenticated HTTPS r
 
 | Path | Purpose |
 |---|---|
-| `strive/audio.py` | Decode, normalize, VAD interface, and ring buffer |
+| `strive/audio.py` | Decode, normalize, VAD interface, and configurable ring buffer |
+| `strive/channel.py` | Channel intelligence: bandwidth, SNR, clipping, continuity, quality |
+| `strive/capture.py` | Bounded capture queue and backpressure counters |
+| `strive/scheduler.py` | Multi-rate branch cadences and staleness |
+| `strive/telemetry.py` | Per-stage timers and p50/p95 aggregation |
+| `strive/branches.py` | Shared branch result schema and availability masking |
 | `strive/features.py` | Demo DSP features and measured acoustic profile |
 | `strive/retrieval.py` | Global FAISS partitions and in-session FAISS comparison |
 | `strive/engine.py` | Three tracks, bootstrap, gates, weights and EMA |
@@ -113,6 +118,9 @@ For network access, put the app behind your organization's authenticated HTTPS r
 | `tests/` | Architecture, stream, API, policy, privacy and evaluation checks |
 | `evidence/` | Measured test/benchmark results and replay events |
 | `docs/` | Architecture decisions, limits, model setup and API reference |
+| `docs/BASELINE.md` | Frozen pre-sprint baseline: environment, deps, measured tests |
+| `docs/LATENCY.md` | Timers, multi-rate scheduler and measured latency |
+| `docs/CODEC_BENCHMARK.md` | Codec condition matrix and paired-manifest rules |
 
 ## Push to your GitHub repository
 

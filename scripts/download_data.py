@@ -15,6 +15,7 @@ from pathlib import Path
 import shutil
 import sys
 import tarfile
+import urllib.error
 import urllib.request
 import zipfile
 from itertools import combinations
@@ -37,8 +38,18 @@ def digest(path: Path, algorithm: str = 'sha256') -> str:
     return h.hexdigest()
 
 
-def download(url: str, output: Path, checksum: str, token: str | None = None) -> Path:
-    """Fetch HTTPS to a temporary path and commit only after checksum verification."""
+def download(url: str, output: Path, checksum: str, token: str | None = None,
+             attempts: int = 8) -> Path:
+    """Fetch HTTPS to a temporary path and commit only after checksum verification.
+
+    Resumes with HTTP Range between attempts. A slow or flaky link drops multi-GB
+    transfers part way through, and `copyfileobj` returns normally on a truncated
+    body, so a short read is checked explicitly against Content-Length rather than
+    being left for the final checksum to catch after hours of transfer.
+
+    The checksum remains the only thing that can commit the file: resumption only
+    decides where to restart, never whether the result is trusted.
+    """
     if not url.startswith('https://'):
         raise ValueError('Download URL must use HTTPS')
     algorithm, expected = checksum.split(':',1)
@@ -48,9 +59,9 @@ def download(url: str, output: Path, checksum: str, token: str | None = None) ->
     if output.exists() and digest(output,algorithm) == expected:
         return output
     temporary = output.with_suffix(output.suffix+'.partial')
-    headers = {'User-Agent':'STRIVE-research-data/0.2'}
+    base_headers = {'User-Agent':'STRIVE-research-data/0.2'}
     if token:
-        headers['Authorization'] = 'Bearer '+token
+        base_headers['Authorization'] = 'Bearer '+token
     # Explicit authenticated URLs must not redirect credentials to another host.
     class SameHostRedirect(urllib.request.HTTPRedirectHandler):
         def redirect_request(self, req: urllib.request.Request, fp: Any, code: int, msg: str,
@@ -60,14 +71,45 @@ def download(url: str, output: Path, checksum: str, token: str | None = None) ->
                 raise ValueError('Refusing unsafe download redirect')
             return super().redirect_request(req,fp,code,msg,hdrs,newurl)
     opener = urllib.request.build_opener(SameHostRedirect())
-    try:
-        with opener.open(urllib.request.Request(url,headers=headers),timeout=60) as source, temporary.open('wb') as target:
-            shutil.copyfileobj(source,target,8*1024*1024)
-        if digest(temporary,algorithm) != expected:
-            raise ValueError('Checksum mismatch for '+output.name)
-        temporary.replace(output)
-    finally:
-        temporary.unlink(missing_ok=True)
+    total = None
+    for attempt in range(1,attempts+1):
+        have = temporary.stat().st_size if temporary.exists() else 0
+        if total is not None and have == total:
+            break
+        headers = dict(base_headers)
+        if have:
+            headers['Range'] = f'bytes={have}-'
+        try:
+            with opener.open(urllib.request.Request(url,headers=headers),timeout=120) as source:
+                resuming = source.status == 206
+                if have and not resuming:
+                    # Server ignored Range (Zenodo does). Start over rather than
+                    # appending a second copy of the file onto the partial one.
+                    have = 0
+                declared = source.headers.get('Content-Length')
+                if declared is not None:
+                    total = int(declared)+have
+                with temporary.open('ab' if resuming and have else 'wb') as target:
+                    shutil.copyfileobj(source,target,8*1024*1024)
+        except (urllib.error.URLError,TimeoutError,ConnectionError,OSError) as error:
+            if attempt == attempts:
+                raise
+            print(f'  {output.name}: {type(error).__name__} at '
+                  f'{temporary.stat().st_size if temporary.exists() else 0}/{total} bytes, '
+                  f'retrying ({attempt}/{attempts})',flush=True)
+            continue
+        got = temporary.stat().st_size
+        if total is None or got >= total:
+            break
+        if attempt == attempts:
+            raise ValueError(f'Truncated download for {output.name}: {got}/{total} bytes')
+        print(f'  {output.name}: short read {got}/{total} bytes, '
+              f'resuming ({attempt}/{attempts})',flush=True)
+    if digest(temporary,algorithm) != expected:
+        raise ValueError('Checksum mismatch for '+output.name)
+    # The partial file is deliberately NOT removed on failure, so the next run
+    # resumes from where this one stopped instead of restarting the transfer.
+    temporary.replace(output)
     return output
 
 

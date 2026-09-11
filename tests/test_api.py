@@ -85,6 +85,18 @@ def test_health_and_metrics(client):
     assert client.get('/assets/pcm-worklet.js').status_code == 200
 
 
+def test_rest_drop_metrics_are_counted_once(index):
+    settings = Settings(audit_path=":memory:", stride_s=.5, capture_queue_windows=1)
+    with TestClient(create_app(settings, DSPExtractor(), index)) as client:
+        call = client.post('/v1/calls', json={}).json()['call_id']
+        responses = [client.post(f'/v1/calls/{call}/chunks', json=frame(i)) for i in range(3)]
+        assert all(response.status_code == 200 for response in responses)
+        assert responses[-1].json()['events'][0]['dropped_windows'] == 1
+        metrics = client.get('/metrics').text
+        assert 'strive_dropped_windows_total 1\n' in metrics
+        assert 'strive_dropped_events_total' not in metrics
+
+
 def test_context_not_acoustic_evidence(client):
     c = client.post('/v1/calls', json={}).json()['call_id']
     for i in range(7): result = client.post(f'/v1/calls/{c}/chunks', json=frame(i)).json()

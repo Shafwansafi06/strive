@@ -83,6 +83,14 @@ class BoundedWindowQueue:
             self.stats.current_depth = len(self.items)
         return taken
 
+    def record_frame_ingested(self) -> None:
+        with self.lock:
+            self.stats.frames_ingested += 1
+
+    def record_window_scored(self) -> None:
+        with self.lock:
+            self.stats.windows_scored += 1
+
     def consume_drop_flag(self) -> int:
         """Read and clear the drop count accumulated since the last scored window."""
         with self.lock:

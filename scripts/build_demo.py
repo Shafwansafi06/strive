@@ -32,14 +32,14 @@ def main():
               'python':sys.version.split()[0],'platform':platform.platform(),'scenarios':summary,
               'neural_inference_tested':False,'speech_accuracy_measured':False,'raw_live_audio_saved':False}
     evidence = root / 'evidence'; evidence.mkdir(exist_ok=True)
-    (evidence / 'demo-events.json').write_text(json.dumps(result, indent=2, allow_nan=False))
-    (evidence / 'benchmark.json').write_text(json.dumps(report, indent=2, allow_nan=False))
-    html = (root / 'web/index.html').read_text()
-    css = (root / 'web/style.css').read_text(); js = (root / 'web/app.js').read_text()
+    (evidence / 'demo-events.json').write_text(json.dumps(result, indent=2, allow_nan=False), encoding='utf-8')
+    (evidence / 'benchmark.json').write_text(json.dumps(report, indent=2, allow_nan=False), encoding='utf-8')
+    html = (root / 'web/index.html').read_text(encoding='utf-8')
+    css = (root / 'web/style.css').read_text(encoding='utf-8'); js = (root / 'web/app.js').read_text(encoding='utf-8')
     html = html.replace('<link rel="stylesheet" href="/assets/style.css">', '<style>' + css + '</style>')
     data = json.dumps(result, ensure_ascii=True).replace('</', '<\\/')
     html = html.replace('<script src="/assets/app.js"></script>', '<script>window.STRIVE_DEMO=' + data + ';</script><script>' + js + '</script>')
-    output = root / 'STRIVE_Demo.html'; output.write_text(html)
+    output = root / 'STRIVE_Demo.html'; output.write_text(html, encoding='utf-8')
     print(json.dumps(report, indent=2)); print('Portable replay:', output)
 
 

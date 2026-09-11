@@ -108,7 +108,7 @@ class Call:
         self.sequence += 1
         self.received += len(samples)
         self.touched = time.monotonic()
-        self.capture.stats.frames_ingested += 1
+        self.capture.record_frame_ingested()
         return self.capture.put(windows)
 
     def drain(self, limit: int | None = None) -> list[dict]:
@@ -118,7 +118,7 @@ class Call:
             if self.closed:
                 break
             # Counted as it starts, so an event's own telemetry includes itself.
-            self.capture.stats.windows_scored += 1
+            self.capture.record_window_scored()
             events.append(self._score(window))
         return events
 

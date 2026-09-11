@@ -109,6 +109,25 @@ def test_queue_is_thread_safe():
     assert q.telemetry()["windows_queued"] == 600
 
 
+def test_capture_counters_are_thread_safe():
+    q = BoundedWindowQueue(capacity=1)
+
+    def record_counters():
+        for _ in range(1000):
+            q.record_frame_ingested()
+            q.record_window_scored()
+
+    threads = [threading.Thread(target=record_counters) for _ in range(5)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    stats = q.telemetry()
+    assert stats["frames_ingested"] == 5000
+    assert stats["windows_scored"] == 5000
+
+
 # ------------------------------------------------ capture / inference split
 
 def test_ingest_never_runs_a_model(index):

@@ -63,7 +63,7 @@ def create_app(settings=None, extractor=None, index=None):
     cfg = settings or Settings.from_env()
     sessions, locks = {}, {}
     stats = {"windows": 0, "errors": 0, "total_ms": 0., "queue_ms": 0., "overruns": 0,
-             "dropped_windows": 0, "dropped_events": 0}
+             "dropped_windows": 0}
 
     @asynccontextmanager
     async def lifespan(app):
@@ -156,6 +156,7 @@ def create_app(settings=None, extractor=None, index=None):
             stats["queue_ms"] += e["latency_ms"]["queue"]
             stats["overruns"] += "COMPUTE_EXCEEDS_STRIDE" in e["reasons"]
             stats["errors"] += "MODEL_OR_INDEX_ERROR" in e["reasons"]
+            stats["dropped_windows"] += e.get("dropped_windows", 0)
         return events
 
     async def process(call, samples, sequence):
@@ -332,7 +333,6 @@ def create_app(settings=None, extractor=None, index=None):
                 # for longer than one drain. The bounded queue absorbs the rest and
                 # reports what it discarded.
                 events = await process(call, pcm(frame), frame.sequence)
-                stats["dropped_windows"] += sum(e.get("dropped_windows", 0) for e in events)
                 await ws.send_json({"type": "events", "sequence": frame.sequence,
                                     "events": events, "queued": call.capture.depth()})
         except WebSocketDisconnect:
@@ -357,7 +357,6 @@ def create_app(settings=None, extractor=None, index=None):
                 f"strive_errors_total {stats['errors']}\nstrive_latency_ms_sum {stats['total_ms']:.3f}\n"
                 f"strive_queue_ms_sum {stats['queue_ms']:.3f}\n"
                 f"strive_dropped_windows_total {stats['dropped_windows']}\n"
-                f"strive_dropped_events_total {stats['dropped_events']}\n"
                 f"strive_stride_overruns_total {stats['overruns']}\n")
 
     app.mount("/assets", StaticFiles(directory=WEB), name="assets")

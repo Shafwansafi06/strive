@@ -149,8 +149,9 @@ class DSPExtractor:
         edges = sorted(set([0, *list(peaks + 1), len(b)]))
         if len(edges) < 3:
             edges = list(range(0, len(b), 15)) + [len(b)]
+        duration = len(x) / RATE
         segments = [Segment(float(max(0, times[a] - .0125)),
-                            float(min(2, times[e - 1] + .0125)), unit(b[a:e].mean(axis=0)))
+                            float(min(duration, times[e - 1] + .0125)), unit(b[a:e].mean(axis=0)))
                     for a, e in zip(edges[:-1], edges[1:]) if e > a]
         return Features(cm, profile, segments, None, {**stats, "extractor": self.id,
              "profile_kind": "acoustic-24", "segments_kind": "spectral-flux-surrogate"})

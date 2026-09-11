@@ -53,6 +53,9 @@ class ResearchExtractor:
 
     def __init__(self, cfg: Settings) -> None:
         self.cfg = cfg
+        # The NII CM is exported as a traced graph at a fixed input length. Derive
+        # the expected window from config so a re-exported bundle can use 4 s.
+        self.window_samples = round(cfg.window_s * cfg.sample_rate)
         self.root = Path(cfg.model_dir).resolve()
         root = self.root
         manifest_path = require_file(root / "manifest.json")
@@ -184,10 +187,10 @@ class ResearchExtractor:
         return unit(np.concatenate(vectors)), {"profile_kind": "vox", "vox_traits": len(vectors)}
 
     def extract(self, waveform: np.ndarray) -> Features:
-        """Return actual frozen-model features for exactly one 16 kHz 2-s window."""
+        """Return actual frozen-model features for exactly one 16 kHz window (cfg.window_s seconds)."""
         raw = np.asarray(waveform, dtype=np.float32)
-        if raw.shape != (32000,) or not np.isfinite(raw).all() or np.max(np.abs(raw)) > 1.01:
-            raise ValueError("Research input must be 32,000 finite normalized mono float samples")
+        if raw.shape != (self.window_samples,) or not np.isfinite(raw).all() or np.max(np.abs(raw)) > 1.01:
+            raise ValueError(f"Research input must be {self.window_samples} finite normalized mono float samples")
         with self.lock:
             if self.closed:
                 raise RuntimeError("ResearchExtractor is closed")

@@ -71,8 +71,8 @@ def run_dataset(rows: list[dict], cfg: Settings, extractor: Any, index: Referenc
             record["bootstrap"] = call.bootstrap
             record["language_route"] = call.language
             records.append(record)
-            all_latency.extend(e["latency_ms"] for e in events)
-            feature_latency.extend(e["stage_ms"]["features"] for e in events if e["stage_ms"]["features"] > 0)
+            all_latency.extend(e["latency_ms"]["end_to_end"] for e in events)
+            feature_latency.extend(e["stage_ms"]["artifact"] for e in events if e["stage_ms"].get("artifact", 0) > 0)
         finally:
             call.close()
             if audio is not None:

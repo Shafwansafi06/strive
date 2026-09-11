@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from math import gcd
 import subprocess
+import time
 import numpy as np
 import soundfile as sf
 from scipy.signal import resample_poly
@@ -77,10 +78,20 @@ class Window:
     start_s: float
     end_s: float
     fresh_samples: np.ndarray
+    # Monotonic clock reading at the moment the window became complete. Queue
+    # delay is measured from here, so it stays honest once AUD-04 moves
+    # inference off the capture thread.
+    enqueued: float = 0.
 
 
 class RingBuffer:
-    def __init__(self):
+    """Emit `window_s` windows every `hop_s`; fresh_samples never double-counts audio."""
+
+    def __init__(self, window_s: float = 2.0, hop_s: float = 1.0):
+        self.window = round(window_s * RATE)
+        self.hop = round(hop_s * RATE)
+        if not 0 < self.hop <= self.window:
+            raise ValueError("Require 0 < hop_s <= window_s")
         self.pending = np.empty(0, dtype=np.float32)
         self.start = 0
         self.first = True
@@ -91,12 +102,14 @@ class RingBuffer:
             raise ValueError("Expected normalized finite PCM")
         self.pending = np.concatenate((self.pending, x))
         windows = []
-        while len(self.pending) >= 2 * RATE:
-            data = self.pending[:2 * RATE].copy()
-            fresh = data if self.first else data[RATE:]
-            windows.append(Window(data, self.start / RATE, self.start / RATE + 2, fresh))
-            self.pending = self.pending[RATE:]
-            self.start += RATE
+        now = time.monotonic()
+        while len(self.pending) >= self.window:
+            data = self.pending[:self.window].copy()
+            fresh = data if self.first else data[self.window - self.hop:]
+            windows.append(Window(data, self.start / RATE,
+                                  (self.start + self.window) / RATE, fresh, now))
+            self.pending = self.pending[self.hop:]
+            self.start += self.hop
             self.first = False
         return windows
 

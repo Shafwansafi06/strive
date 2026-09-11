@@ -48,7 +48,7 @@ def test_real_research_pipeline_and_stride_budget() -> None:
         assert all(e['demo_only'] is False for e in events)
         assert call.language_source in ('model','model_low_confidence')
         budget = float(os.getenv('STRIVE_STRIDE_BUDGET_MS','1000'))
-        latency = [e['latency_ms'] for e in events]
+        latency = [e['latency_ms']['end_to_end'] for e in events]
         assert max(latency) <= budget, f'Max {max(latency):.1f}ms exceeds {budget}ms on {cfg.device}; target hardware acceptance failed'
     finally:
         if call is not None:

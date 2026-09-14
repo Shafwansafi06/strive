@@ -1,0 +1,8 @@
+{
+  "mode": "demo",
+  "window_s": 2.0,
+  "stride_s": 0.5,
+  "multi_rate": false,
+  "capture_queue_windows": 8,
+  "channel_reliability": true
+}

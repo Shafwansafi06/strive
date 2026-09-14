@@ -1,0 +1,4 @@
+id,display_name,path,source_type,label,language,speaker_id,generator,codec,duration,attack_onset_sec,license,provenance,notes
+genuine,Genuine Call,audio/genuine.wav,consented_audio,genuine,en,consented-speaker-1,none,wav,,,REPLACE_WITH_LICENSE,REPLACE_WITH_PROVENANCE,No attack onset
+spoof,Deepfake / Spoof Call,audio/spoof.wav,licensed_spoof,spoof,en,consented-speaker-2,REPLACE_WITH_GENERATOR,wav,0,0,REPLACE_WITH_LICENSE,REPLACE_WITH_PROVENANCE,Label only after verification
+mid_call,Mid-Call Voice Replacement,audio/mid_call_attack.wav,consented_composite,spoof,en,consented-speaker-3,REPLACE_WITH_GENERATOR,wav,,15,REPLACE_WITH_LICENSE,REPLACE_WITH_PROVENANCE,Onset must match constructed composite

@@ -24,7 +24,7 @@ def main():
             summary[name] = {'windows':len(events),'bootstrap':events[-1]['bootstrap'],
                 'last_risk':events[-1]['s_risk'], 'profile_entries':events[-1]['profile_entries'],
                 'first_warning_s':next((e['session_age_s'] for e in events if e['alert_level']=='warning'),None),
-                'first_alert_s':next((e['session_age_s'] for e in events if e['alert_level']=='alert'),None),
+                'first_alert_s':next((e['session_age_s'] for e in events if e['alert_level'] in ('alert','critical')),None),
                 'p50_ms':float(np.percentile([e['latency_ms']['end_to_end'] for e in events],50)),
                 'p95_ms':float(np.percentile([e['latency_ms']['end_to_end'] for e in events],95))}
             client.delete('/v1/calls/' + record['call_id'])

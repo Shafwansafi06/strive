@@ -29,8 +29,13 @@ def scheduled_weights(age: float, preset: str = "proposed") -> list[float]:
 
 
 def aggregate(scores: list, age: float, previous: float | None, alpha: float = .7,
-              preset: str = "proposed") -> tuple:
+              preset: str = "proposed", reliability: list | None = None) -> tuple:
     weights = np.array(scheduled_weights(age, preset))
+    if reliability is not None:
+        rel = np.asarray(reliability, dtype=float)
+        if rel.shape != (3,) or not np.isfinite(rel).all() or np.any((rel < 0) | (rel > 1)):
+            raise ValueError("Reliability must contain three finite values within [0,1]")
+        weights *= rel
     weights[[s is None for s in scores]] = 0
     if weights.sum() == 0 or scores[0] is None:
         return None, [0., 0., 0.], None
@@ -87,6 +92,10 @@ class Call:
         self.latest = None
         self.hold_latched = False
         self.verification_epoch = -1
+        self.workflow = "monitoring"
+        self.verification_method = None
+        self.previous_active = False
+        self.last_scored_end = None
         self.pool = ThreadPoolExecutor(max_workers=3, thread_name_prefix="strive-track")
 
     def ingest(self, samples: np.ndarray, sequence: int) -> int:
@@ -143,6 +152,9 @@ class Call:
         self.risk = None
         self.latest = None
         self.hold_latched = True
+        self.workflow = "held"
+        self.previous_active = False
+        self.last_scored_end = None
 
     def _score(self, window: Window) -> dict:
         started = time.perf_counter()
@@ -160,6 +172,8 @@ class Call:
             # The analyzer genuinely did not see that audio. Reset continuity so the
             # gap is not misread as a splice in the source signal.
             self.channel.previous = None
+            self.scheduler.reset()
+            self.previous_active = False
             reasons.append("CAPTURE_QUEUE_OVERFLOW")
         with timer.stage("channel"):
             channel = self.channel.measure(window.samples, window.fresh_samples)
@@ -193,7 +207,10 @@ class Call:
                     jobs = [self.pool.submit(self.index.query, features.cm, self.language, self.cfg.global_k,
                                             self.cfg.min_partition_entries, self.cfg.min_neighbor_similarity),
                             self.pool.submit(self.sps.similarity, features),
-                            self.pool.submit(boundary_coherence, features, window.start_s == 0, self.seam_s)]
+                            self.pool.submit(boundary_coherence, features,
+                                not self.previous_active or dropped > 0 or
+                                (self.last_scored_end is not None and
+                                 abs(age - self.last_scored_end - self.cfg.stride_s) > 1e-6), self.seam_s)]
                     global_score, info = jobs[0].result()
                     similarity = jobs[1].result()
                     coherence_score = jobs[2].result()
@@ -217,7 +234,9 @@ class Call:
             self.scheduler.skip("artifact")
             cached = self.scheduler.snapshot(now=age)["artifact"]
             if cached.available:
-                global_score, session_score, coherence_score = cached.metadata["tracks"]
+                global_score, session_score, _ = cached.metadata["tracks"]
+                # Boundary evidence belongs to the seam where it was measured.
+                coherence_score = None
                 similarity = cached.metadata["similarity"]
                 info = dict(cached.metadata["info"], reused=True)
                 reasons.append("BRANCH_RESULT_REUSED")
@@ -225,6 +244,7 @@ class Call:
                 reasons.extend(cached.reason_codes)
         else:
             reasons.append("LOW_AUDIO_ACTIVITY")
+            self.scheduler.reset()
 
         if self.bootstrap == "pending":
             self.bootstrap_scores.append(global_score)
@@ -247,9 +267,12 @@ class Call:
             self.sps.add(features)
 
         enough = self.voiced_s >= self.cfg.min_voiced_s and active and global_score is not None
+        quality = channel.quality if channel.quality is not None else 0.
+        reliability = [quality] * 3 if self.cfg.channel_reliability else [1.] * 3
         with timer.stage("fusion"):
             acoustic_risk, weights, raw = aggregate([global_score, session_score, coherence_score], age, self.risk,
-                                                    self.cfg.alpha, self.cfg.weight_preset)
+                                                    self.cfg.alpha, self.cfg.weight_preset, reliability)
+        enough = enough and acoustic_risk is not None
         if active and acoustic_risk is not None:
             self.risk = acoustic_risk
         exposed_risk = self.risk if enough else None
@@ -265,11 +288,35 @@ class Call:
             reasons.append("GLOBAL_LANGUAGE_FALLBACK")
         if self.extractor.is_surrogate:
             reasons.append("SURROGATE_FEATURES_NOT_A_DEEPFAKE_VERDICT")
-        policy = decide(exposed_risk, self.context, self.cfg.warning, self.cfg.alert)
-        if policy["recommended_action"] in ("HOLD_AND_VERIFY", "VERIFY_CALLER"):
+        policy = decide(exposed_risk, self.context, self.cfg.warning, self.cfg.alert, self.cfg.critical)
+        if policy["recommended_action"] in ("HOLD_AND_ESCALATE", "HOLD_AND_VERIFY", "VERIFY_CALLER"):
             self.hold_latched = True
             self.verification_epoch = -1
+            if self.workflow not in ("blocked", "review", "verification_pending"):
+                self.workflow = "held"
+        scheduler = self.scheduler.telemetry(now=age)
+        branch_age = scheduler["branches"]["artifact"]["age_ms"]
+        branches = {}
+        for name, score, reason in (("artifact", global_score, "NO_GLOBAL_EVIDENCE"),
+                                    ("session", session_score, "NO_TRUSTED_PROFILE"),
+                                    ("coherence", coherence_score, "NO_ADJACENT_VOICED_PAIR")):
+            branches[name] = {"score": score, "available": score is not None,
+                "freshness": ("fresh" if branch_age == 0 else "cached") if score is not None else
+                    ("stale" if scheduler["branches"]["artifact"]["stale"] else "unavailable"),
+                "age_ms": branch_age, "reliability": quality if score is not None else None,
+                "confidence": None, "reason": "MEASURED_UNCALIBRATED" if score is not None else reason}
+        branches["channel"] = {"score": channel.quality, "available": channel.quality is not None,
+            "freshness": "fresh" if channel.quality is not None else "unavailable", "age_ms": 0,
+            "reliability": channel.quality, "confidence": None, "reason": "QUALITY_NOT_SPOOF_RISK"}
+        self.previous_active = active
+        self.last_scored_end = age
         compute_ms = (time.perf_counter() - started) * 1000
+        authenticity_state = "ANALYZING" if exposed_risk is None else \
+            "CRITICAL" if exposed_risk >= self.cfg.critical else \
+            "HIGH" if exposed_risk >= self.cfg.alert else \
+            "REVIEW" if exposed_risk >= self.cfg.warning else "LOW"
+        decision_state = {"analyzing": "ANALYZING", "low": "LOW", "warning": "REVIEW",
+                          "alert": "HIGH", "critical": "CRITICAL"}[policy["alert_level"]]
         event = {"schema_version": "1.1", "call_id": self.id, "timestamp": time.time(),
                  "session_age_s": age, "voiced_seconds": round(self.voiced_s, 3),
                  "s_risk": exposed_risk, "authenticity_risk": exposed_risk,
@@ -278,7 +325,11 @@ class Call:
                  "language": self.language, "language_source": self.language_source,
                  "bootstrap": self.bootstrap, "profile_entries": len(self.sps.entries),
                  "retrieval": info, "channel": channel.to_dict(),
-                 "scheduler": self.scheduler.telemetry(now=age),
+                 "scheduler": scheduler, "branches": branches,
+                 "authenticity_state": authenticity_state, "state": authenticity_state,
+                 "decision_state": decision_state,
+                 "workflow": self.workflow, "hold_latched": self.hold_latched,
+                 "geometry": {"sample_rate": RATE, "window_s": self.cfg.window_s, "hop_s": self.cfg.stride_s},
                  "capture": self.capture.telemetry(),
                  "dropped_windows": dropped, "reasons": reasons, "mode": self.cfg.mode,
                  "source": self.source, "model_version": self.extractor.id,

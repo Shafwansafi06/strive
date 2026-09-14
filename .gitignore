@@ -1,4 +1,13 @@
 .venv/
+.venv-linux/
+.tools/
+.runtime/
+.research-venv/
+.export-venv/
+data/demo/manifest.csv
+data/demo/audio/
+*.m4a
+*.ogg
 __pycache__/
 .pytest_cache/
 *.pyc

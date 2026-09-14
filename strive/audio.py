@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from math import gcd
 import subprocess
+import shutil
 import time
 import numpy as np
 import soundfile as sf
@@ -36,10 +37,15 @@ def decode(data: bytes, max_s=120):
             return normalize(f.read(dtype="float32", always_2d=True), f.samplerate)
     except (sf.LibsndfileError, RuntimeError):
         # No temp recording. Decode untrusted media only through pipes, never a shell.
-        result = subprocess.run(
-            ["ffmpeg", "-nostdin", "-v", "error", "-protocol_whitelist", "pipe",
-             "-i", "pipe:0", "-t", str(max_s + 1), "-ac", "1", "-ar", str(RATE),
-             "-f", "f32le", "pipe:1"], input=data, capture_output=True, timeout=20)
+        if shutil.which("ffmpeg") is None:
+            raise ValueError("Cannot decode audio. Use WAV/FLAC, or install FFmpeg for other formats")
+        try:
+            result = subprocess.run(
+                ["ffmpeg", "-nostdin", "-v", "error", "-protocol_whitelist", "pipe",
+                 "-i", "pipe:0", "-t", str(max_s + 1), "-ac", "1", "-ar", str(RATE),
+                 "-f", "f32le", "pipe:1"], input=data, capture_output=True, timeout=20)
+        except subprocess.TimeoutExpired as exc:
+            raise ValueError("Audio decoding timed out") from exc
         if result.returncode:
             raise ValueError("Cannot decode this audio format")
         x = np.frombuffer(result.stdout, dtype="<f4").copy()

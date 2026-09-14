@@ -1,5 +1,22 @@
 # MVP requirement traceability
 
+## SIH presentation completion update
+
+The presentation layer now adds realtime/accelerated upload playback through the
+WebSocket path; three prominent deterministic scenarios; a three-risk dashboard;
+branch freshness/reliability; channel detail; playback/onset/time-to-alert display;
+explicit hold; callback/MFA/supervisor outcomes; status/latency; scenario import;
+preflight; Windows/POSIX launchers; offline replay; and a presenter runbook.
+
+Automated tests cover upload playback, incremental events, onset metadata,
+verification failure/review, audit privacy, common channel reliability semantics,
+and the scenario manifest. Physical microphone permission and acoustic hardware
+remain manual checks because CI has no microphone.
+
+Still research-blocked: real neural inference, licensed reference/evaluation speech,
+calibration, Indian-language quality, codec detection metrics and neural latency.
+These are unavailable rather than represented by fixture results.
+
 Status meanings: **Implemented** = code and relevant automated checks exist; **Research path** = adapter/scripts exist but pretrained execution is not validated here; **Open** = not completed. A fixture replay does not satisfy a detection-quality release gate.
 
 | Requirement from DOCX | STRIVE implementation | Status / boundary |

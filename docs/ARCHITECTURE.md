@@ -1,5 +1,51 @@
 # Implemented STRIVE architecture
 
+## SIH presentation architecture (2026-09-14)
+
+The presentation path extends the original API without replacing its scoring
+architecture. Microphone frames, decoded uploads and deterministic scenarios all
+enter `Call.ingest`/`Call.drain`, the same ring buffer, capture queue, evidence,
+fusion and policy path. File replay is controlled over the primary WebSocket and
+supports audio-time realtime pacing or accelerated QA. Upload bytes and normalized
+audio remain transient and are erased after playback or call teardown.
+
+The 16 kHz canonical contract remains. `config/presentation.json` selects a 2 s
+analysis window and 0.5 s hop for approximately two UI updates per audio second.
+The original 1 s default remains backward-compatible. Branch scheduling uses the
+audio timeline. A gap, silence boundary or capture overflow invalidates continuity
+and scheduler caches, so evidence from before an interruption is not presented as
+current.
+
+Risk separation is enforced at the policy boundary:
+
+```text
+artifact + session + coherence -- reliability mask --> AUTHENTICITY RISK
+transaction metadata -------------------------------> CONTEXT RISK
+authenticity + context -- policy only --------------> DECISION RISK
+```
+
+Channel quality applies one common reliability mask to acoustic branches. Common
+scaling cancels during normalization, so a merely degraded channel cannot lower or
+raise a valid authenticity score. If quality is unusable, fusion abstains. A future
+branch-specific rule requires held-out speech/codec validation before adoption.
+
+Every branch now exposes availability, freshness, age, reliability and a reason.
+The three legacy track scores remain for clients. Continuity evidence is not reused
+at a later seam. The dashboard labels low scores as low observed risk and keeps the
+temporary in-call profile distinct from real-world identity verification.
+
+The prevention state machine is ephemeral:
+
+```text
+monitoring -> held -> verification_pending
+                         | verified -> release current evidence epoch
+                         | failed   -> blocked/escalated
+                         | review   -> remain held
+```
+
+Actions and transitions enter the allow-listed metadata audit. No raw speech or
+embedding enters the audit. Verification is a clearly labelled simulation.
+
 ## Source precedence
 
 1. `STRIVE_architecture_detailed_1 1(1).pdf`: one-page pipeline diagram, visually reviewed.

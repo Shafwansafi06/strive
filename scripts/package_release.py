@@ -29,7 +29,9 @@ def release_files(root: Path) -> list[Path]:
             continue
         if path.suffix in ('.pyc','.zip','.wav','.flac','.mp3','.pt','.bin','.safetensors','.npz'):
             continue
-        if relative.parts[0] in FOLDERS or relative.as_posix() in ROOT_FILES or relative.as_posix() == 'data/manifest.example.csv':
+        data_examples = {'data/manifest.example.csv', 'data/demo/README.md',
+                         'data/demo/manifest.example.csv'}
+        if relative.parts[0] in FOLDERS or relative.as_posix() in ROOT_FILES or relative.as_posix() in data_examples:
             result.append(path)
     return result
 

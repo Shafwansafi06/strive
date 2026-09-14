@@ -1,5 +1,20 @@
 # Research models: preparation, contracts and limits
 
+## Current presentation status
+
+The operational presentation runtime is `DEMO DSP` with `dsp-surrogate-v1` and a
+48-vector procedural FAISS index. It is shown in the UI as **not a neural accuracy
+benchmark**. No NII, XLSR phoneme or SpeechBrain language weights are present in
+this repository or were executed for the final presentation validation.
+
+The preferred research prototype remains the frozen NII MMS-300M countermeasure
+path because its 1,024-dimensional export is more practical for a presentation
+laptop than XLS-R-2B. This preference is operational, not a measured accuracy
+claim. Research startup checks the sealed manifest hash, exact `input_samples`
+against active window geometry, CM dimension, every pinned dependency, fixture
+index prohibition and extractor/index ID compatibility. Any mismatch fails startup;
+there is no silent DSP fallback.
+
 ## Verified upstream facts
 
 | Component | Source / finding |

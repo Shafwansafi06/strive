@@ -1,0 +1,87 @@
+{
+  "ready": true,
+  "mode": "DEMO DSP",
+  "neural_accuracy_benchmark": false,
+  "checks": [
+    {
+      "name": "Python environment",
+      "pass": true,
+      "detail": "3.12.14"
+    },
+    {
+      "name": "Package fastapi",
+      "pass": true,
+      "detail": "available"
+    },
+    {
+      "name": "Package numpy",
+      "pass": true,
+      "detail": "available"
+    },
+    {
+      "name": "Package scipy",
+      "pass": true,
+      "detail": "available"
+    },
+    {
+      "name": "Package soundfile",
+      "pass": true,
+      "detail": "available"
+    },
+    {
+      "name": "Package faiss",
+      "pass": true,
+      "detail": "available"
+    },
+    {
+      "name": "FFmpeg",
+      "pass": true,
+      "detail": "/usr/bin/ffmpeg"
+    },
+    {
+      "name": "Dashboard",
+      "pass": true,
+      "detail": "all frontend assets present"
+    },
+    {
+      "name": "Demo scenarios",
+      "pass": true,
+      "detail": "three deterministic synthetic scenarios; optional consented manifest supported"
+    },
+    {
+      "name": "Active geometry",
+      "pass": true,
+      "detail": "16 kHz, 2.0 s window, 0.5 s hop"
+    },
+    {
+      "name": "Privacy settings",
+      "pass": true,
+      "detail": "raw audio persistence disabled; audit uses allow-listed metadata"
+    },
+    {
+      "name": "Port availability",
+      "pass": true,
+      "detail": "127.0.0.1:8000"
+    },
+    {
+      "name": "Backend",
+      "pass": true,
+      "detail": "{'ready': True, 'mode': 'demo', 'model_version': 'dsp-surrogate-v1', 'device': 'cpu', 'model_ready': True, 'reference_index_ready': True, 'language_model_ready': False, 'deepfake_detection_validated': False, 'reference_vectors': 48, 'demo_notice': 'Not a neural accuracy benchmark'}"
+    },
+    {
+      "name": "WebSocket",
+      "pass": true,
+      "detail": "authenticated local stream"
+    },
+    {
+      "name": "Audio pipeline",
+      "pass": true,
+      "detail": "57 incremental windows through mid-call scenario"
+    },
+    {
+      "name": "Hold / verify",
+      "pass": true,
+      "detail": "simulated prevention endpoint"
+    }
+  ]
+}

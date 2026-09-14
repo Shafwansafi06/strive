@@ -15,10 +15,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from .audio import RATE, MAX_UPLOAD, decode
 from .audit import Audit
 from .config import Settings
-from .demo import SCENARIOS, make_demo_index, scenario_audio
+from .demo import SCENARIOS, PRESENTATION_SCENARIOS, make_demo_index, scenario_audio
 from .engine import Call
 from .features import DSPExtractor
 from .retrieval import ReferenceIndex
+from .scheduler import MultiRateScheduler
 
 WEB = Path(__file__).resolve().parent.parent / "web"
 LANGUAGES = {"auto", "und", "hi", "ta", "te", "bn", "mr", "kn", "en", "mixed"}
@@ -46,7 +47,13 @@ class PCMFrame(BaseModel):
 
 class Verification(BaseModel):
     method: Literal["callback", "mfa", "supervisor"]
-    confirmed: bool
+    confirmed: bool = False
+    outcome: Literal["verified", "failed", "review"] | None = None
+
+
+class Playback(BaseModel):
+    mode: Literal["realtime", "accelerated"] = "realtime"
+    scenario: Literal["genuine", "spoof", "mid_call"] | None = None
 
 
 def pcm(frame):
@@ -61,9 +68,10 @@ def pcm(frame):
 
 def create_app(settings=None, extractor=None, index=None):
     cfg = settings or Settings.from_env()
-    sessions, locks = {}, {}
+    sessions, locks, uploads = {}, {}, {}
+    audit_states = {}
     stats = {"windows": 0, "errors": 0, "total_ms": 0., "queue_ms": 0., "overruns": 0,
-             "dropped_windows": 0}
+             "dropped_windows": 0, "latencies": []}
 
     @asynccontextmanager
     async def lifespan(app):
@@ -95,12 +103,17 @@ def create_app(settings=None, extractor=None, index=None):
                             call.close()
                             sessions.pop(key, None)
                             locks.pop(key, None)
+                            audio = uploads.pop(key, None)
+                            if audio is not None: audio["samples"].fill(0)
         task = asyncio.create_task(reaper())
         yield
         stop.set()
         await task
         for call in sessions.values():
             call.close()
+        for item in uploads.values():
+            item["samples"].fill(0)
+        uploads.clear()
         app.state.audit.close()
         if hasattr(extractor, "close"):
             extractor.close()
@@ -114,7 +127,7 @@ def create_app(settings=None, extractor=None, index=None):
 
     @app.middleware("http")
     async def access(request: Request, call_next):
-        maximum = MAX_UPLOAD if request.url.path == "/v1/analyze" else 90000
+        maximum = MAX_UPLOAD if request.url.path == "/v1/analyze" or request.url.path.endswith("/upload") else 90000
         try:
             if int(request.headers.get("content-length", "0")) > maximum:
                 return JSONResponse({"detail": "Request body too large"}, status_code=413)
@@ -151,12 +164,21 @@ def create_app(settings=None, extractor=None, index=None):
     def record(events):
         for e in events:
             app.state.audit.write(e["call_id"], "risk.updated", e)
+            before = audit_states.get(e["call_id"])
+            if before != e["state"]:
+                kind = "risk.escalated" if e["state"] in ("REVIEW", "HIGH", "CRITICAL") else "risk.state_changed"
+                app.state.audit.write(e["call_id"], kind, e)
+                audit_states[e["call_id"]] = e["state"]
+            if e.get("hold_latched") and before not in ("REVIEW", "HIGH", "CRITICAL"):
+                app.state.audit.write(e["call_id"], "action.held", e)
             stats["windows"] += 1
             stats["total_ms"] += e["latency_ms"]["end_to_end"]
             stats["queue_ms"] += e["latency_ms"]["queue"]
             stats["overruns"] += "COMPUTE_EXCEEDS_STRIDE" in e["reasons"]
             stats["errors"] += "MODEL_OR_INDEX_ERROR" in e["reasons"]
             stats["dropped_windows"] += e.get("dropped_windows", 0)
+            stats["latencies"].append(e["latency_ms"]["end_to_end"])
+            if len(stats["latencies"]) > 1000: del stats["latencies"][:-1000]
         return events
 
     async def process(call, samples, sequence):
@@ -179,7 +201,10 @@ def create_app(settings=None, extractor=None, index=None):
     @app.get("/ready")
     def ready():
         return {"ready": True, "mode": cfg.mode, "model_version": extractor.id,
-                "deepfake_detection_validated": False, "reference_vectors": len(index.x)}
+                "device": cfg.device, "model_ready": True, "reference_index_ready": True,
+                "language_model_ready": bool(getattr(extractor, "lid", None)),
+                "deepfake_detection_validated": False, "reference_vectors": len(index.x),
+                "demo_notice": "Not a neural accuracy benchmark" if extractor.is_surrogate else None}
 
     @app.get("/v1/config")
     def configuration():
@@ -187,11 +212,28 @@ def create_app(settings=None, extractor=None, index=None):
         for key in ("api_token", "model_dir", "index_path", "audit_path"):
             public.pop(key)
         return {**public, "languages": sorted(LANGUAGES), "scenarios": SCENARIOS,
+                "presentation_scenarios": PRESENTATION_SCENARIOS,
                 "model_version": extractor.id, "demo_only": extractor.is_surrogate}
+
+    @app.get("/v1/status")
+    def status():
+        values = sorted(stats["latencies"])
+        def percentile(fraction):
+            return values[min(len(values) - 1, max(0, int(np.ceil(len(values) * fraction)) - 1))] if values else None
+        return {"backend": "healthy", "mode": cfg.mode, "device": cfg.device,
+                "model": extractor.id, "model_ready": True, "reference_index_ready": True,
+                "active_sessions": len(sessions), "windows": stats["windows"],
+                "dropped_windows": stats["dropped_windows"],
+                "latency_ms": {"current": values[-1] if values else None,
+                               "p50": percentile(.5), "p95": percentile(.95)},
+                "geometry": {"sample_rate": cfg.sample_rate, "window_s": cfg.window_s,
+                             "hop_s": cfg.stride_s},
+                "branch_cadence_ms": dict(getattr(next(iter(sessions.values()), None), "scheduler", MultiRateScheduler()).cadence)}
 
     @app.post("/v1/calls", status_code=201)
     async def start(body: NewCall):
         c = new_call(body)
+        app.state.audit.write(c.id, "call.started", {"status": "analyzing", "source": c.source})
         return {"call_id": c.id, "ws_path": f"/v1/stream/{c.id}", "sample_rate": RATE, "encoding": "s16le"}
 
     @app.post("/v1/calls/{key}/chunks")
@@ -217,6 +259,9 @@ def create_app(settings=None, extractor=None, index=None):
             await asyncio.to_thread(call.close)
             sessions.pop(key, None)
             locks.pop(key, None)
+            item = uploads.pop(key, None)
+            if item is not None: item["samples"].fill(0)
+            audit_states.pop(key, None)
         app.state.audit.write(key, "call.ended", {"status": "ended"})
         return {"status": "ended", "ephemeral_state_deleted": True}
 
@@ -224,16 +269,78 @@ def create_app(settings=None, extractor=None, index=None):
     def audit(key: str):
         return {"call_id": key, "events": app.state.audit.read(key)}
 
+    @app.get("/v1/calls/{key}")
+    def call_state(key: str):
+        call = get_call(key)
+        return {"call_id": key, "source": call.source, "workflow": call.workflow,
+                "hold_latched": call.hold_latched, "latest": call.latest,
+                "upload": {k: v for k, v in uploads.get(key, {}).items() if k != "samples"}}
+
+    @app.post("/v1/calls/{key}/upload")
+    async def upload(key: str, request: Request, filename: str = "upload.wav"):
+        call = get_call(key)
+        suffix = Path(filename).suffix.lower()
+        supported = {".wav", ".flac", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".webm"}
+        if suffix not in supported:
+            raise HTTPException(415, "Supported formats: WAV, FLAC, and FFmpeg-decodable MP3/M4A/AAC/OGG/Opus/WebM")
+        data = bytearray()
+        async for chunk in request.stream():
+            data.extend(chunk)
+            if len(data) > MAX_UPLOAD:
+                raise HTTPException(413, "Maximum upload is 20 MiB")
+        try:
+            audio = await asyncio.to_thread(decode, bytes(data), min(120, cfg.max_call_s))
+        except (ValueError, FileNotFoundError, TimeoutError) as e:
+            raise HTTPException(422, str(e))
+        if len(audio) < round(cfg.window_s * RATE):
+            audio.fill(0)
+            raise HTTPException(422, f"Audio is too short; provide at least {cfg.window_s:g} seconds")
+        if float(np.max(np.abs(audio))) < .001:
+            audio.fill(0)
+            raise HTTPException(422, "Audio is silent; no evidence can be analyzed")
+        previous = uploads.pop(key, None)
+        if previous is not None: previous["samples"].fill(0)
+        uploads[key] = {"samples": audio, "filename": Path(filename).name[:160],
+                        "duration_s": len(audio) / RATE, "sample_rate": RATE,
+                        "channels": 1, "raw_audio_saved": False}
+        call.source = "file_upload_stream"
+        return {k: v for k, v in uploads[key].items() if k != "samples"}
+
+    @app.post("/v1/calls/{key}/hold")
+    async def hold(key: str):
+        call = get_call(key)
+        async with locks[key]:
+            call.hold_latched = True
+            call.workflow = "held"
+            call.verification_epoch = -1
+        event = {"status": "held_mock", "recommended_action": "HOLD_PENDING_VERIFICATION",
+                 "demo_only": True}
+        app.state.audit.write(key, "action.held", event)
+        return event
+
     @app.post("/v1/calls/{key}/verify")
     async def verify(key: str, body: Verification):
         call = get_call(key)
-        if not body.confirmed:
-            raise HTTPException(422, "Confirm the external verification before recording it")
+        outcome = body.outcome or ("verified" if body.confirmed else None)
+        if outcome is None:
+            raise HTTPException(422, "Provide a simulated verification outcome")
         async with locks[key]:
-            call.verification_epoch = call.sequence
-            call.hold_latched = False
-        event = {"status": "mock_verification_recorded", "method": body.method}
-        app.state.audit.write(key, "verification.completed", event)
+            call.verification_method = body.method
+            if outcome == "verified":
+                call.verification_epoch = call.sequence
+                call.hold_latched = False
+                call.workflow = "verified"
+            elif outcome == "failed":
+                call.verification_epoch = -1
+                call.hold_latched = True
+                call.workflow = "blocked"
+            else:
+                call.verification_epoch = -1
+                call.hold_latched = True
+                call.workflow = "review"
+        status = {"verified": "verified_mock", "failed": "blocked_mock", "review": "supervisor_review_mock"}[outcome]
+        event = {"status": status, "method": body.method, "outcome": outcome, "demo_only": True}
+        app.state.audit.write(key, "verification." + outcome, event)
         return event
 
     @app.post("/v1/calls/{key}/transaction")
@@ -243,11 +350,11 @@ def create_app(settings=None, extractor=None, index=None):
             from .policy import decide
             risk = call.latest.get("s_risk") if call.latest else None
             stale = time.monotonic() - call.touched > 3
-            policy = decide(None if stale else risk, call.context, cfg.warning, cfg.alert)
+            policy = decide(None if stale else risk, call.context, cfg.warning, cfg.alert, cfg.critical)
             needs_check = (call.hold_latched or stale or risk is None or
                            policy["recommended_action"] != "CONTINUE_MONITORING" or cfg.mode == "demo")
             verified = call.verification_epoch == call.sequence
-            status = "executed_mock" if not needs_check or verified else "held_mock"
+            status = "blocked_mock" if call.workflow == "blocked" else "executed_mock" if not needs_check or verified else "held_mock"
             event = {"status": status, "recommended_action": policy["recommended_action"],
                      "demo_only": cfg.mode == "demo"}
             app.state.audit.write(key, "transaction.attempt", event)
@@ -322,6 +429,60 @@ def create_app(settings=None, extractor=None, index=None):
                 if len(message) > 88000:
                     raise ValueError("Frame exceeds size limit")
                 obj = json.loads(message)
+                if obj.get("type") == "playback":
+                    command = Playback.model_validate(obj)
+                    metadata = None
+                    if command.scenario:
+                        metadata = PRESENTATION_SCENARIOS[command.scenario]
+                        audio = scenario_audio(command.scenario)
+                        source_name = metadata["display_name"]
+                        call.source = "synthetic_presentation_scenario"
+                    else:
+                        item = uploads.get(key)
+                        if item is None:
+                            raise ValueError("Upload audio before starting playback")
+                        audio = item["samples"]
+                        source_name = item["filename"]
+                    duration = len(audio) / RATE
+                    await ws.send_json({"type": "playback_started", "mode": command.mode,
+                        "source": source_name, "duration_s": duration,
+                        "synthetic": bool(command.scenario),
+                        "attack_onset_sec": metadata.get("attack_onset_sec") if metadata else None})
+                    emitted = []
+                    frame_samples = max(1, round(cfg.stride_s * RATE))
+                    started = time.monotonic()
+                    try:
+                        for number, offset in enumerate(range(0, len(audio), frame_samples)):
+                            if command.mode == "realtime":
+                                delay = started + number * cfg.stride_s - time.monotonic()
+                                if delay > 0: await asyncio.sleep(delay)
+                            current = audio[offset:offset + frame_samples]
+                            events = await process(call, current, call.sequence)
+                            emitted.extend(events)
+                            await ws.send_json({"type": "events", "sequence": call.sequence - 1,
+                                "events": events, "queued": call.capture.depth(),
+                                "playback": {"mode": command.mode,
+                                    "current_s": min(duration, (offset + len(current)) / RATE),
+                                    "duration_s": duration,
+                                    "progress": min(1., (offset + len(current)) / len(audio))}})
+                        onset = metadata.get("attack_onset_sec") if metadata else None
+                        first_high = next((e["session_age_s"] for e in emitted
+                            if e["state"] in ("HIGH", "CRITICAL") and (onset is None or e["session_age_s"] >= onset)), None)
+                        first_policy_hold = next((e["session_age_s"] for e in emitted
+                            if e["decision_state"] in ("HIGH", "CRITICAL") and
+                            (onset is None or e["session_age_s"] >= onset)), None)
+                        await ws.send_json({"type": "playback_complete", "events": len(emitted),
+                            "duration_s": duration, "attack_onset_sec": onset,
+                            "first_high_sec": first_high,
+                            "first_policy_hold_sec": first_policy_hold,
+                            "time_to_alert_sec": None if onset is None or first_high is None else round(first_high - onset, 3)})
+                    finally:
+                        if command.scenario:
+                            audio.fill(0)
+                        else:
+                            item = uploads.pop(key, None)
+                            if item is not None: item["samples"].fill(0)
+                    continue
                 if obj.get("type") == "gap":
                     async with locks[key]:
                         call.gap()

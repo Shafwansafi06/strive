@@ -9,12 +9,14 @@ def context_risk(context):
     return min(1., score)
 
 
-def decide(auth, context, warning=.5, alert=.75):
+def decide(auth, context, warning=.5, alert=.75, critical=.9):
     ctx = context_risk(context)
     decision = None if auth is None else 1 - (1 - auth) * (1 - .5 * ctx)
     if auth is None:
         action = "HOLD_AND_VERIFY" if ctx >= .5 else "AWAIT_EVIDENCE"
         level = "analyzing"
+    elif decision >= critical:
+        level, action = "critical", "HOLD_AND_ESCALATE"
     elif decision >= alert:
         level, action = "alert", "HOLD_AND_VERIFY"
     elif decision >= warning or ctx >= .7:

@@ -1,237 +1,46 @@
 'use strict';
 const $ = id => document.getElementById(id);
 const portable = Boolean(window.STRIVE_DEMO);
-let token = '', callId = null, events = [], timer = null, socket = null, audioCtx = null;
-let media = null, node = null, last = null, verified = false, running = false;
-const pct = x => x == null ? '—' : String(Math.round(x * 100));
-const reasonNames = {
-  LOW_EVIDENCE: 'Insufficient evidence', LOW_AUDIO_ACTIVITY: 'Low audio activity',
-  BOOTSTRAP_REJECTED: 'Initial trust gate rejected', GLOBAL_REFERENCE_ANOMALY: 'Global reference anomaly',
-  SESSION_INCONSISTENCY: 'Voice differs from session profile', BOUNDARY_DISCONTINUITY: 'Boundary discontinuity',
-  GLOBAL_LANGUAGE_FALLBACK: 'Language partition unavailable · global fallback',
-  SURROGATE_FEATURES_NOT_A_DEEPFAKE_VERDICT: 'Demo features · no deepfake verdict',
-  MODEL_OR_INDEX_ERROR: 'Model unavailable · verification required', COMPUTE_EXCEEDS_STRIDE: 'Compute exceeds 1-second budget'
-};
-function context() {
-  return {amount_inr: Math.max(0, Number($('amount').value) || 0), urgent: $('urgent').checked,
-    new_beneficiary: $('beneficiary').checked, privileged_request: false};
-}
-function contextScore(c) {
-  return Math.min(1, (c.amount_inr >= 1000000 ? .35 : c.amount_inr >= 100000 ? .15 : 0) +
-    (c.urgent ? .2 : 0) + (c.new_beneficiary ? .25 : 0) + (c.privileged_request ? .2 : 0));
-}
-function localPolicy(e) {
-  const c = contextScore(context()), a = e.s_risk;
-  const d = a == null ? null : 1 - (1 - a) * (1 - .5 * c);
-  const level = d == null ? 'analyzing' : d >= .75 ? 'alert' : d >= .5 || c >= .7 ? 'warning' : 'low';
-  return {...e, context_risk: c, decision_risk: d, alert_level: level,
-    recommended_action: level === 'alert' || (level === 'analyzing' && c >= .5) ? 'HOLD_AND_VERIFY' :
-      level === 'warning' ? 'VERIFY_CALLER' : level === 'analyzing' ? 'AWAIT_EVIDENCE' : 'CONTINUE_MONITORING'};
-}
-async function api(path, opts = {}) {
-  const headers = {...(opts.headers || {}), ...(token ? {Authorization: 'Bearer ' + token} : {})};
-  if (opts.body && typeof opts.body === 'object' && !(opts.body instanceof Blob)) {
-    headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(opts.body);
-  }
-  const r = await fetch(path, {...opts, headers});
-  if (!r.ok) { const body = await r.json().catch(() => ({})); throw new Error(typeof body.detail === 'string' ? body.detail : 'Request failed (' + r.status + ')'); }
-  return r.json();
-}
-function message(text) { $('notice').textContent = text; }
-function busy(value) {
-  running = value; document.body.classList.toggle('busy', value); $('stop').disabled = !value;
-  $('transfer').disabled = value || !callId; $('verify').disabled = value || !callId;
-}
-function reset() {
-  events = []; last = null; verified = false;
-  $('events').replaceChildren(); $('auth').textContent = '—'; $('decision').textContent = '—';
-  $('bootstrap').textContent = 'EMPTY'; $('entries').textContent = '0'; $('similarity').textContent = '—';
-  $('call-state').textContent = 'ANALYZING'; $('call-state').className = 'tag';
-  $('confirmed').checked = false; $('transaction-result').textContent = 'No money moves in this demo.';
-  draw();
-}
-function draw() {
-  const canvas = $('chart'), ratio = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth, h = 230;
-  canvas.width = w * ratio; canvas.height = h * ratio;
-  const c = canvas.getContext('2d'); c.scale(ratio, ratio);
-  const left = 27, top = 10, bottom = 25, right = 10;
-  const width = w - left - right, height = h - top - bottom;
-  c.font = '10px system-ui'; c.lineWidth = 1;
-  for (const value of [0, .25, .5, .75, 1]) {
-    const y = top + (1 - value) * height;
-    c.strokeStyle = value === .75 ? '#e9a9b3' : value === .5 ? '#e6cb93' : '#e9edf4';
-    c.setLineDash(value === .75 || value === .5 ? [4, 5] : []);
-    c.beginPath(); c.moveTo(left, y); c.lineTo(w - right, y); c.stroke();
-    c.fillStyle = '#8b95a6'; c.fillText(String(value * 100), 0, y + 3);
-  }
-  c.setLineDash([]);
-  const maxTime = Math.max(40, last?.session_age_s || 0);
-  for (let i = 0; i <= 4; i++) { c.fillStyle = '#8b95a6'; c.fillText(Math.round(maxTime * i / 4) + 's', left + i / 4 * width - 4, h - 3); }
-  c.strokeStyle = '#275df0'; c.lineWidth = 2.6; c.lineJoin = 'round'; c.beginPath(); let connected = false;
-  for (const e of events) {
-    if (e.s_risk == null) { connected = false; continue; }
-    const x = left + e.session_age_s / maxTime * width, y = top + (1 - e.s_risk) * height;
-    if (!connected) c.moveTo(x, y); else c.lineTo(x, y); connected = true;
-  }
-  c.stroke();
-  if (last && last.s_risk != null) {
-    c.beginPath(); c.fillStyle = '#275df0'; c.arc(left + last.session_age_s / maxTime * width, top + (1 - last.s_risk) * height, 4, 0, 2 * Math.PI); c.fill();
-  }
-}
-function display(e, append = true) {
-  last = e; if (append) events.push(e);
-  if (e.alert_level === 'alert' || e.alert_level === 'warning') verified = false;
-  $('auth').textContent = pct(e.s_risk); $('context-risk').textContent = pct(e.context_risk); $('decision').textContent = pct(e.decision_risk);
-  $('clock').textContent = String(Math.floor(e.session_age_s / 60)).padStart(2, '0') + ':' + String(Math.floor(e.session_age_s % 60)).padStart(2, '0');
-  $('call-state').textContent = e.alert_level.toUpperCase(); $('call-state').className = 'tag ' + e.alert_level;
-  $('state-detail').textContent = e.s_risk == null ? 'Collecting enough active audio to score.' : e.demo_only ? 'Engineering score · not an authenticity verdict.' : 'Uncalibrated research score · independent verification required.';
-  $('latency').textContent = e.latency_ms.end_to_end.toFixed(1) + ' ms'; $('voiced').textContent = e.voiced_seconds.toFixed(1) + ' s';
-  ['global', 'session', 'coherence'].forEach((name, i) => {
-    const score = e.track_scores['s_' + name]; $('' + name + '-score').textContent = pct(score);
-    $(name + '-bar').value = score ?? 0; $(name + '-weight').textContent = 'w ' + e.weights[i].toFixed(2);
-  });
-  $('bootstrap').textContent = e.bootstrap.toUpperCase(); $('entries').textContent = e.profile_entries;
-  $('similarity').textContent = e.session_similarity == null ? 'Unavailable' : pct(e.session_similarity) + '%';
-  $('route').textContent = (e.retrieval.route || 'unknown') + (e.retrieval.fallback ? ' (fallback)' : '');
-  $('model').textContent = e.model_version;
-  const policyText = {HOLD_AND_VERIFY: 'Hold & verify', VERIFY_CALLER: 'Verify caller identity', CONTINUE_MONITORING: 'Continue monitoring', AWAIT_EVIDENCE: 'Awaiting evidence'};
-  $('policy').textContent = policyText[e.recommended_action] || e.recommended_action; $('policy').className = 'policy ' + e.alert_level;
-  $('reasons').replaceChildren(...(e.reasons.length ? e.reasons : ['No sustained anomaly']).map(reason => { const s = document.createElement('span'); s.textContent = reasonNames[reason] || reason; return s; }));
-  if (append) {
-    const row = document.createElement('tr');
-    [e.session_age_s + 's', e.alert_level.toUpperCase(), pct(e.track_scores.s_global), pct(e.track_scores.s_session), pct(e.track_scores.s_coherence), policyText[e.recommended_action]].forEach(text => {const cell = document.createElement('td'); cell.textContent = text; row.append(cell);});
-    $('events').prepend(row); while ($('events').children.length > 120) $('events').lastChild.remove();
-  }
-  $('download').disabled = false; draw();
-}
-async function cleanupCall() {
-  if (callId && !portable) await api('/v1/calls/' + callId, {method: 'DELETE'}).catch(() => {});
-  callId = null;
-}
-async function stop() {
-  if (timer) clearInterval(timer); timer = null;
-  if (node) node.disconnect(); node = null;
-  if (media) media.getTracks().forEach(t => t.stop()); media = null;
-  if (audioCtx) await audioCtx.close().catch(() => {}); audioCtx = null;
-  if (socket) socket.close(); socket = null;
-  await cleanupCall(); busy(false);
-  $('transfer').disabled = true; $('verify').disabled = true;
-  message('Stopped. The active session and its transient profile have been deleted. Exports contain scores and scalar diagnostics, not raw audio or embeddings.');
-}
-$('run').onclick = async () => {
-  try {
-    await cleanupCall(); reset(); busy(true);
-    message('Running procedural audio through STRIVE. Playback is accelerated; timestamps reflect audio duration.');
-    const name = $('scenario').value;
-    const result = portable ? structuredClone(window.STRIVE_DEMO[name]) : await api('/v1/demo/' + name, {method:'POST', body:{language:$('language').value, context:context()}});
-    callId = result.call_id;
-    let i = 0;
-    timer = setInterval(() => {
-      if (i >= result.events.length) {
-        clearInterval(timer); timer = null; busy(false);
-        message('Scenario complete. Inspect the tracks, attempt the mock transfer, or export the measured events. Both signal families are synthetic engineering fixtures.'); return;
-      }
-      const event = result.events[i++]; display(portable ? localPolicy(event) : event);
-    }, 120);
-  } catch (e) { busy(false); message(e.message); }
-};
-$('stop').onclick = stop;
-$('context-apply').onclick = async () => {
-  verified = false; $('confirmed').checked = false;
-  try {
-    if (callId && !portable) await api('/v1/calls/' + callId + '/context', {method:'PATCH', body:context()});
-    if (last) display(localPolicy(last), false); else $('context-risk').textContent = pct(contextScore(context()));
-    message('Context updated. The acoustic score is unchanged.');
-  } catch(e) {message(e.message);}
-};
-$('transfer').onclick = async () => {
-  try {
-    const result = portable ? {status: verified ? 'executed_mock' : 'held_mock'} : await api('/v1/calls/' + callId + '/transaction', {method:'POST'});
-    $('transaction-result').textContent = result.status === 'executed_mock' ? 'Mock transfer approved after the required verification. No money moved.' : 'Mock transfer held. Complete an independent verification before approving.';
-  } catch(e) {message(e.message);}
-};
-$('verify').onclick = async () => {
-  if (!$('confirmed').checked) {message('Confirm the independent verification was completed first.'); return;}
-  try {
-    if (!portable) await api('/v1/calls/' + callId + '/verify', {method:'POST', body:{method:$('verification').value, confirmed:true}});
-    verified = true; $('transaction-result').textContent = 'Mock verification recorded for the current evidence. You can retry the transfer.';
-  } catch(e) {message(e.message);}
-};
-$('download').onclick = () => {
-  const blob = new Blob([JSON.stringify({schema_version:'1.0', evidence_type:portable ? 'recorded_engineering_replay' : 'local_run', events}, null, 2)], {type:'application/json'});
-  const url = URL.createObjectURL(blob), a = document.createElement('a'); a.href = url; a.download = 'strive-events.json'; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
-};
-$('upload').onclick = () => $('file').click();
-$('file').onchange = async () => {
-  const file = $('file').files[0]; if (!file) return;
-  try {
-    if (file.size > 20 * 1024 * 1024) throw new Error('Use an audio file smaller than 20 MiB and shorter than two minutes.');
-    await cleanupCall(); reset(); busy(true); message('Analyzing the audio in memory. No raw audio will be saved.');
-    const result = await api('/v1/analyze?language=' + encodeURIComponent($('language').value), {method:'POST', body:file, headers:{'Content-Type':'application/octet-stream'}});
-    result.events.forEach(e => display(e)); busy(false);
-    message(result.events.length ? 'File analysis complete. Demo mode uses surrogate features; research models are needed for meaningful detection evaluation.' : 'Too little audio: at least two seconds are needed for a complete window.');
-  } catch(e) {busy(false); message(e.message);} finally {$('file').value = '';}
-};
-$('mic').onclick = async () => {
-  try {
-    await cleanupCall(); reset(); busy(true);
-    if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone access needs localhost or HTTPS in a supported browser.');
-    media = await navigator.mediaDevices.getUserMedia({audio:{channelCount:1, echoCancellation:false, noiseSuppression:false, autoGainControl:false}});
-    const call = await api('/v1/calls', {method:'POST',body:{language:$('language').value,context:context()}}); callId = call.call_id;
-    socket = new WebSocket(location.origin.replace(/^http/, 'ws') + call.ws_path);
-    let sequence = 0, pending = false, queue = [];
-    const sendNext = () => {
-      if (pending || !queue.length || socket?.readyState !== WebSocket.OPEN) return;
-      const raw = queue.shift(), bytes = new Uint8Array(raw); let binary = '';
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-      pending = true; socket.send(JSON.stringify({sequence:sequence++, pcm_s16le:btoa(binary)}));
-    };
-    await new Promise((resolve, reject) => {
-      socket.onopen = () => socket.send(JSON.stringify({token}));
-      socket.onerror = () => reject(new Error('Could not connect to the audio stream.'));
-      socket.onclose = () => reject(new Error('Stream connection closed before it was ready.'));
-      socket.onmessage = async msg => {
-        const data = JSON.parse(msg.data);
-        if (data.type === 'ready') resolve();
-        else if (data.type === 'events') {pending = false; data.events.forEach(e => display(e)); sendNext();}
-        else if (data.type === 'error') {await stop(); message(data.message);}
-      };
-    });
-    socket.onclose = async () => {if (running && audioCtx) {await stop(); message('Stream disconnected. The call profile was cleared.');}};
-    audioCtx = new AudioContext({sampleRate:16000}); await audioCtx.resume();
-    await audioCtx.audioWorklet.addModule('/assets/pcm-worklet.js');
-    const source = audioCtx.createMediaStreamSource(media);
-    node = new AudioWorkletNode(audioCtx, 'strive-pcm');
-    const mute = audioCtx.createGain(); mute.gain.value = 0;
-    source.connect(node); node.connect(mute); mute.connect(audioCtx.destination);
-    node.port.onmessage = async e => {
-      queue.push(e.data);
-      if (queue.length > 3) {await stop(); message('Inference fell behind the live stream. Capture stopped to avoid scoring stale audio.'); return;}
-      sendNext();
-    };
-    $('transfer').disabled = false; $('verify').disabled = false;
-    message('Microphone active · 16 kHz mono · one update per second after warm-up. In demo mode these are unvalidated surrogate scores.');
-  } catch(e) {await stop(); message(e.message);}
-};
-$('auth-config').onclick = async () => {
-  token = prompt('API bearer token (leave empty for localhost demo):', '') || '';
-  try {await api('/ready'); message('API access verified. The token stays in this page’s memory.');} catch(e) {message(e.message);}
-};
-window.addEventListener('resize', draw);
-if (portable) {
-  $('connection').textContent = 'Recorded demo · offline';
-  $('mic').disabled = true; $('upload').disabled = true; $('auth-config').disabled = true;
-  $('language').disabled = true;
-  message('Portable replay of measured backend runs. No models run in this file. Microphone and audio upload are available in the local Python app.');
-} else {
-  api('/v1/config').then(config => {
-    $('model').textContent = config.model_version;
-    if (!config.demo_only) {
-      $('mode').replaceChildren(document.createTextNode('RESEARCH MODE'));
-      $('run').disabled = true; $('scenario').disabled = true;
-      message('Frozen local research models loaded. Scores and thresholds remain uncalibrated until evaluated on held-out speech.');
-    }
-  }).catch(e => message(e.message + ' Use API access if this server requires a token.'));
-}
-draw();
+let token = '', callId = null, socket = null, audioCtx = null, media = null, node = null;
+let events = [], auditEvents = [], last = null, running = false, attackOnset = null, playbackDuration = 40;
+const pct = value => value == null ? '—' : String(Math.round(value * 100));
+const clock = value => `${String(Math.floor(value / 60)).padStart(2, '0')}:${String(Math.floor(value % 60)).padStart(2, '0')}`;
+const reasonNames = {LOW_EVIDENCE:'Collecting sufficient voiced evidence',LOW_AUDIO_ACTIVITY:'Low audio activity',BOOTSTRAP_REJECTED:'Opening evidence was not trusted',GLOBAL_REFERENCE_ANOMALY:'Artifact evidence increased',SESSION_INCONSISTENCY:'Voice differs from the in-call profile',BOUNDARY_DISCONTINUITY:'Speech continuity changed',GLOBAL_LANGUAGE_FALLBACK:'Language index unavailable; using global reference',SURROGATE_FEATURES_NOT_A_DEEPFAKE_VERDICT:'Demo DSP evidence; no neural accuracy claim',MODEL_OR_INDEX_ERROR:'Model or reference evidence unavailable',COMPUTE_EXCEEDS_STRIDE:'Inference exceeded the audio hop',CAPTURE_QUEUE_OVERFLOW:'Capture queue overflow; continuity reset',BRANCH_RESULT_REUSED:'Fresh cached branch result reused'};
+const branchReasons = {MEASURED_UNCALIBRATED:'Measured, uncalibrated evidence',NO_GLOBAL_EVIDENCE:'No artifact evidence',NO_TRUSTED_PROFILE:'Temporary profile not established',NO_ADJACENT_VOICED_PAIR:'No valid adjacent voiced pair',QUALITY_NOT_SPOOF_RISK:'Reliability only; never spoof evidence'};
+
+function context() { return {amount_inr:Math.max(0,Number($('amount').value)||0),urgent:$('urgent').checked,new_beneficiary:$('beneficiary').checked,privileged_request:$('privileged').checked}; }
+function contextScore(c) { return Math.min(1,(c.amount_inr>=1000000?.35:c.amount_inr>=100000?.15:0)+(c.urgent?.2:0)+(c.new_beneficiary?.25:0)+(c.privileged_request?.2:0)); }
+function localPolicy(event) { const c=contextScore(context()),a=event.s_risk,d=a==null?null:1-(1-a)*(1-.5*c); const decision=d==null?'ANALYZING':d>=.9?'CRITICAL':d>=.75?'HIGH':d>=.5||c>=.7?'REVIEW':'LOW',auth=a==null?'ANALYZING':a>=.9?'CRITICAL':a>=.75?'HIGH':a>=.5?'REVIEW':'LOW'; return {...event,context_risk:c,decision_risk:d,state:auth,authenticity_state:auth,decision_state:decision,recommended_action:decision==='CRITICAL'?'HOLD_AND_ESCALATE':decision==='HIGH'?'HOLD_AND_VERIFY':decision==='REVIEW'?'VERIFY_CALLER':decision==='ANALYZING'?'AWAIT_EVIDENCE':'CONTINUE_MONITORING'}; }
+async function api(path,options={}) { const headers={...(options.headers||{}),...(token?{Authorization:'Bearer '+token}:{})}; if(options.body&&typeof options.body==='object'&&!(options.body instanceof Blob)&&!(options.body instanceof File)){headers['Content-Type']='application/json';options.body=JSON.stringify(options.body);} const response=await fetch(path,{...options,headers}); if(!response.ok){const body=await response.json().catch(()=>({}));throw new Error(typeof body.detail==='string'?body.detail:`Request failed (${response.status})`);} return response.json(); }
+function message(text,kind='info'){ $('notice').textContent=text; $('notice').className='notice '+kind; }
+function setBusy(value){running=value;document.body.classList.toggle('busy',value);$('stop').disabled=!value;}
+function logEvent(text,time=last?.session_age_s||0,kind='info'){auditEvents.push({time,text,kind});const p=document.createElement('p');p.textContent=`${clock(time)} · ${text}`;p.dataset.kind=kind;$('events').prepend(p);while($('events').children.length>24)$('events').lastChild.remove();}
+
+function resetView(){events=[];auditEvents=[];last=null;attackOnset=null;playbackDuration=40;$('events').replaceChildren();logEvent('Ready for a new call',0);for(const id of ['auth','decision'])$(id).textContent='—';$('call-state').textContent='READY';$('call-state').className='';$('auth-state').textContent='ANALYZING';$('decision-state').textContent='ANALYZING';$('bootstrap').textContent='PENDING';$('entries').textContent='0';$('similarity').textContent='Similarity —';$('route').textContent='—';$('playback-card').hidden=true;$('alert-timing').hidden=true;$('onset-legend').hidden=true;$('hold').disabled=true;document.querySelectorAll('.outcomes button').forEach(button=>button.disabled=true);$('transaction-result').textContent='No action is currently held.';document.querySelectorAll('.evidence-card').forEach(card=>{card.querySelector('.branch-state').textContent='Unavailable';card.querySelector('.branch-value').textContent='—';card.querySelector('progress').value=0;});draw();}
+function normalizeEvent(event){if(event.state)return event;const tracks=event.track_scores||{};const branches={artifact:{score:tracks.s_global,available:tracks.s_global!=null,freshness:'recorded',reason:tracks.s_global==null?'NO_GLOBAL_EVIDENCE':'MEASURED_UNCALIBRATED'},session:{score:tracks.s_session,available:tracks.s_session!=null,freshness:'recorded',reason:tracks.s_session==null?'NO_TRUSTED_PROFILE':'MEASURED_UNCALIBRATED'},coherence:{score:tracks.s_coherence,available:tracks.s_coherence!=null,freshness:'recorded',reason:tracks.s_coherence==null?'NO_ADJACENT_VOICED_PAIR':'MEASURED_UNCALIBRATED'},channel:{score:event.channel?.quality,available:event.channel?.quality!=null,freshness:'recorded',reason:'QUALITY_NOT_SPOOF_RISK'}};return localPolicy({...event,branches,workflow:'monitoring',hold_latched:false});}
+function draw(){const canvas=$('chart'),ratio=window.devicePixelRatio||1,w=Math.max(300,canvas.clientWidth),h=250,left=28,right=12,top=12,bottom=24,width=w-left-right,height=h-top-bottom;canvas.width=w*ratio;canvas.height=h*ratio;const c=canvas.getContext('2d');c.scale(ratio,ratio);c.font='10px system-ui';for(const value of [0,.25,.5,.75,1]){const y=top+(1-value)*height;c.strokeStyle=value===.75?'#713044':value===.5?'#66522a':'#1b344d';c.setLineDash(value===.5||value===.75?[4,5]:[]);c.beginPath();c.moveTo(left,y);c.lineTo(w-right,y);c.stroke();c.fillStyle='#8297ab';c.fillText(String(value*100),0,y+3);}const maxTime=Math.max(playbackDuration,last?.session_age_s||0,10);if(attackOnset!=null){const x=left+attackOnset/maxTime*width;c.strokeStyle='#fff';c.setLineDash([2,4]);c.beginPath();c.moveTo(x,top);c.lineTo(x,top+height);c.stroke();c.fillStyle='#fff';c.fillText('VOICE CHANGE',Math.min(x+4,w-90),top+10);}function line(key,color){c.strokeStyle=color;c.lineWidth=2.4;c.setLineDash([]);c.beginPath();let connected=false;for(const event of events){const value=event[key];if(value==null){connected=false;continue;}const x=left+event.session_age_s/maxTime*width,y=top+(1-value)*height;if(!connected)c.moveTo(x,y);else c.lineTo(x,y);connected=true;}c.stroke();}line('authenticity_risk','#23d2c3');line('decision_risk','#4a8cff');c.fillStyle='#8297ab';for(let i=0;i<=4;i++)c.fillText(clock(maxTime*i/4),left+i/4*width-7,h-4);}
+
+function display(raw){const event=normalizeEvent(raw);last=event;events.push(event);$('auth').textContent=pct(event.authenticity_risk??event.s_risk);$('context-risk').textContent=pct(event.context_risk);$('decision').textContent=pct(event.decision_risk);$('decision-state').textContent=event.decision_state||'ANALYZING';$('clock').textContent=clock(event.session_age_s);$('call-state').textContent=event.state;$('call-state').className=event.state.toLowerCase();$('auth-state').textContent=event.authenticity_state||'ANALYZING';$('call-detail').textContent=event.s_risk==null?'Insufficient current evidence':event.demo_only?'Observed DSP evidence · uncalibrated':'Observed neural evidence · uncalibrated';$('bootstrap').textContent=String(event.bootstrap||'pending').toUpperCase();$('entries').textContent=event.profile_entries??0;$('similarity').textContent='Similarity '+(event.session_similarity==null?'unavailable':pct(event.session_similarity)+'%');$('language-result').textContent=String(event.language||'und').toUpperCase();$('route').textContent=event.retrieval?.route||'—';
+  for(const name of ['artifact','session','coherence','channel']){const branch=event.branches?.[name]||{},card=document.querySelector(`[data-branch="${name}"]`),value=branch.score;card.querySelector('.branch-value').textContent=value==null?'—':pct(value);card.querySelector('progress').value=value??0;card.querySelector('.branch-state').textContent=branch.available?`${branch.freshness||'fresh'} · rel ${pct(branch.reliability)}`:branch.freshness||'unavailable';card.querySelector('.branch-reason').textContent=branchReasons[branch.reason]||branch.reason||'Unavailable';}
+  const channel=event.channel||{};$('channel-detail').textContent=`Bandwidth ${channel.estimated_bandwidth_hz==null?'—':Math.round(channel.estimated_bandwidth_hz)+' Hz'} · SNR ${channel.snr_db==null?'—':channel.snr_db.toFixed(1)+' dB'} · Input ${channel.rms_dbfs==null?'—':channel.rms_dbfs.toFixed(1)+' dBFS'}`;$('latency').textContent=event.latency_ms?.end_to_end==null?'—':event.latency_ms.end_to_end.toFixed(1)+' ms';$('queue').textContent=(event.capture?.current_depth??0)+' / '+(event.capture?.capacity??'—');$('dropped').textContent=event.capture?.windows_dropped??event.dropped_windows??0;$('geometry').textContent=event.geometry?`${event.geometry.sample_rate/1000} kHz · ${event.geometry.window_s}s / ${event.geometry.hop_s}s`:'—';$('reasons').replaceChildren(...(event.reasons?.length?event.reasons:['NO_CURRENT_ANOMALY']).map(reason=>{const span=document.createElement('span');span.textContent=reasonNames[reason]||reason;return span;}));
+  const policyNames={HOLD_AND_ESCALATE:'HOLD & ESCALATE',HOLD_AND_VERIFY:'HOLD PENDING VERIFICATION',VERIFY_CALLER:'VERIFY CALLER',CONTINUE_MONITORING:'CONTINUE MONITORING',AWAIT_EVIDENCE:'AWAITING EVIDENCE'};$('policy').textContent=policyNames[event.recommended_action]||event.recommended_action;$('policy').className='policy '+(event.decision_state||'analyzing').toLowerCase();const held=Boolean(event.hold_latched)||['HOLD_AND_VERIFY','HOLD_AND_ESCALATE'].includes(event.recommended_action);$('hold').disabled=!callId||portable;document.querySelectorAll('.outcomes button').forEach(button=>button.disabled=!callId||!held||portable);if(held)$('transaction-result').textContent='Possible voice impersonation. Sensitive action requires a trusted-channel check.';
+  const previous=events.at(-2);if(!previous||previous.state!==event.state)logEvent(event.state==='LOW'?'Low observed risk':event.state==='ANALYZING'?'Analyzing audio evidence':`${event.state} threshold crossed`,event.session_age_s,event.state.toLowerCase());if(event.bootstrap==='trusted'&&previous?.bootstrap!=='trusted')logEvent('Temporary in-call profile established',event.session_age_s,'profile');if(event.reasons?.includes('SESSION_INCONSISTENCY')&&!previous?.reasons?.includes('SESSION_INCONSISTENCY'))logEvent('Session voice consistency changed',event.session_age_s,'review');draw();$('download').disabled=false;}
+
+async function closeCall(){if(socket){socket.onclose=null;socket.close();socket=null;}$('websocket-state').textContent='Disconnected';if(callId&&!portable)await api('/v1/calls/'+callId,{method:'DELETE'}).catch(()=>{});callId=null;}
+async function stop(){if(node){node.disconnect();node=null;}if(media){media.getTracks().forEach(track=>track.stop());media=null;}if(audioCtx){await audioCtx.close().catch(()=>{});audioCtx=null;}await closeCall();setBusy(false);message('Call stopped. Transient audio and in-call profile were deleted.');logEvent('Call ended',last?.session_age_s||0);}
+async function createCall(){await closeCall();const result=await api('/v1/calls',{method:'POST',body:{language:'auto',context:context()}});callId=result.call_id;return result;}
+async function connect(path){return new Promise((resolve,reject)=>{socket=new WebSocket(location.origin.replace(/^http/,'ws')+path);socket.onopen=()=>socket.send(JSON.stringify({token}));socket.onerror=()=>reject(new Error('Could not connect to the real-time stream.'));socket.onclose=()=>{if(running)message('WebSocket disconnected. Start a new call.','error');$('websocket-state').textContent='Disconnected';};socket.onmessage=messageEvent=>{const data=JSON.parse(messageEvent.data);if(data.type==='ready'){$('websocket-state').textContent='Connected';resolve();}else if(data.type==='playback_started'){attackOnset=data.attack_onset_sec;playbackDuration=data.duration_s;$('playback-card').hidden=false;$('source-name').textContent=data.source;$('source-meta').textContent=`${data.mode.toUpperCase()} · 16 kHz mono${data.synthetic?' · DEMO / SYNTHETIC':''}`;$('onset-legend').hidden=attackOnset==null;logEvent('Call started',0);}else if(data.type==='events'){data.events.forEach(display);if(data.playback){$('playback-progress').value=data.playback.progress;$('playback-clock').textContent=`${clock(data.playback.current_s)} / ${clock(data.playback.duration_s)}`;}}else if(data.type==='playback_complete'){setBusy(false);$('playback-progress').value=1;if(data.attack_onset_sec!=null){$('alert-timing').hidden=false;$('alert-timing').textContent=`Attack onset: ${data.attack_onset_sec.toFixed(1)} s · First HIGH: ${data.first_high_sec==null?'not reached':data.first_high_sec.toFixed(1)+' s'} · Time-to-alert: ${data.time_to_alert_sec==null?'not available':data.time_to_alert_sec.toFixed(1)+' s'}`;}message('Playback complete. Use Hold & Verify to demonstrate prevention.');logEvent('Audio playback complete',data.duration_s);}else if(data.type==='error'){message(data.message,'error');setBusy(false);}};});}
+async function runScenario(name){try{resetView();setBusy(true);const call=await createCall();await connect(call.ws_path);socket.send(JSON.stringify({type:'playback',scenario:name,mode:$('playback-mode').value}));message(name==='mid_call'?'Building a trusted profile, then introducing the synthetic source change at 15 seconds.':'Streaming the synthetic scenario through the live pipeline.');}catch(error){setBusy(false);message(error.message,'error');}}
+document.querySelectorAll('.scenario').forEach(button=>button.onclick=()=>portable?runPortable(button.dataset.scenario):runScenario(button.dataset.scenario));
+async function runPortable(name){resetView();setBusy(true);const legacy={genuine:'steady',spoof:'suspicious_start',mid_call:'switch'}[name],record=structuredClone(window.STRIVE_DEMO[legacy]);attackOnset=name==='mid_call'?18:name==='spoof'?0:null;playbackDuration=40;$('playback-card').hidden=false;$('source-name').textContent=record.description;$('source-meta').textContent='OFFLINE REPLAY / FALLBACK DEMO';$('onset-legend').hidden=attackOnset==null;let i=0;const timer=setInterval(()=>{if(i>=record.events.length){clearInterval(timer);setBusy(false);message('Offline replay complete. No model ran in this file.');return;}display(record.events[i++]);$('playback-progress').value=i/record.events.length;$('playback-clock').textContent=`${clock(i)} / 00:40`;},100);}
+
+$('upload').onclick=()=>portable?message('Upload needs the local backend.'): $('file').click();
+$('file').onchange=async()=>{const file=$('file').files[0];if(!file)return;try{if(file.size>20*1024*1024)throw new Error('Maximum upload size is 20 MiB.');resetView();setBusy(true);const call=await createCall();const metadata=await api('/v1/calls/'+callId+'/upload?filename='+encodeURIComponent(file.name),{method:'POST',body:file,headers:{'Content-Type':'application/octet-stream'}});await connect(call.ws_path);$('source-name').textContent=metadata.filename;socket.send(JSON.stringify({type:'playback',mode:$('playback-mode').value}));message('Decoded in memory and streaming through the same call pipeline as microphone audio.');}catch(error){setBusy(false);message(error.message,'error');await closeCall();}finally{$('file').value='';}};
+$('mic').onclick=async()=>{try{if(portable)throw new Error('Microphone needs the local backend.');resetView();setBusy(true);if(!navigator.mediaDevices?.getUserMedia)throw new Error('Microphone access requires localhost or HTTPS.');media=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:false,noiseSuppression:false,autoGainControl:false}});const call=await createCall();await connect(call.ws_path);audioCtx=new AudioContext({sampleRate:16000});await audioCtx.resume();await audioCtx.audioWorklet.addModule('/assets/pcm-worklet.js');const source=audioCtx.createMediaStreamSource(media);node=new AudioWorkletNode(audioCtx,'strive-pcm');const mute=audioCtx.createGain();mute.gain.value=0;source.connect(node);node.connect(mute);mute.connect(audioCtx.destination);let sequence=0,pending=false,queue=[];const sendNext=()=>{if(pending||!queue.length||socket?.readyState!==WebSocket.OPEN)return;const bytes=new Uint8Array(queue.shift());let binary='';for(let i=0;i<bytes.length;i++)binary+=String.fromCharCode(bytes[i]);pending=true;socket.send(JSON.stringify({sequence:sequence++,pcm_s16le:btoa(binary)}));};socket.onmessage=messageEvent=>{const data=JSON.parse(messageEvent.data);if(data.type==='events'){pending=false;data.events.forEach(display);sendNext();}else if(data.type==='error'){message(data.message,'error');}};node.port.onmessage=event=>{queue.push(event.data);if(queue.length>3){stop();message('Capture stopped because inference fell behind.','error');return;}sendNext();};$('playback-card').hidden=false;$('source-name').textContent='Live microphone';$('source-meta').textContent=`Browser input ${audioCtx.sampleRate} Hz → 16 kHz mono`;$('websocket-state').textContent='Connected';logEvent('Microphone capture started',0);message('Microphone active. Speak naturally; low observed risk is not identity verification.');}catch(error){await stop();message(error.message,'error');}};
+$('stop').onclick=stop;$('new-call').onclick=async()=>{await stop();resetView();message('New call ready.');};$('reset').onclick=async()=>{await stop();resetView();$('amount').value=1000000;$('urgent').checked=true;$('beneficiary').checked=true;$('privileged').checked=false;$('context-risk').textContent='80';message('Demo reset to the recommended transaction context.');};$('presentation-mode').onclick=()=>{document.body.classList.toggle('presentation');$('presentation-mode').textContent=document.body.classList.contains('presentation')?'Exit Presentation Mode':'Presentation Mode';};
+$('context-apply').onclick=async()=>{const before=last?.authenticity_risk;if(callId&&!portable)await api('/v1/calls/'+callId+'/context',{method:'PATCH',body:context()}).catch(error=>message(error.message,'error'));$('context-risk').textContent=pct(contextScore(context()));if(last){const revised=localPolicy(last);revised.authenticity_risk=before;display(revised);}message('Business context updated. Acoustic authenticity risk is unchanged.');logEvent('Business context updated',last?.session_age_s||0);};
+$('hold').onclick=async()=>{try{if(!callId)return;const result=await api('/v1/calls/'+callId+'/hold',{method:'POST'});$('policy').textContent='HOLD PENDING VERIFICATION';$('policy').className='policy held';$('transaction-result').textContent='Sensitive action held. Select a trusted-channel outcome.';document.querySelectorAll('.outcomes button').forEach(button=>button.disabled=false);logEvent('Sensitive action held',last?.session_age_s||0,'high');message(result.recommended_action.replaceAll('_',' '));}catch(error){message(error.message,'error');}};
+document.querySelectorAll('.outcomes button').forEach(button=>button.onclick=async()=>{try{const outcome=button.dataset.outcome,method=$('verification').value,result=await api('/v1/calls/'+callId+'/verify',{method:'POST',body:{method,outcome}});const text=outcome==='verified'?'Trusted verification succeeded. Action may proceed.':outcome==='failed'?'Verification failed. Action blocked and escalated.':'Supervisor review requested. Action remains held.';$('transaction-result').textContent=text;$('policy').textContent=outcome==='verified'?'VERIFIED · MAY PROCEED':outcome==='failed'?'BLOCKED & ESCALATED':'HELD · SUPERVISOR REVIEW';$('policy').className='policy '+(outcome==='failed'?'blocked':outcome);logEvent(outcome==='verified'?'Verification succeeded':outcome==='failed'?'Verification failed; action blocked':'Escalated to supervisor review',last?.session_age_s||0,outcome);message(result.status.replaceAll('_',' '));}catch(error){message(error.message,'error');}});
+$('download').onclick=()=>{const payload={schema_version:'sih-mvp-1',evidence_type:portable?'offline_recorded_replay':'local_runtime_metadata',raw_audio_included:false,attack_onset_sec:attackOnset,events,audit_events:auditEvents};const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),anchor=document.createElement('a');anchor.href=url;anchor.download='strive-session-evidence.json';anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};$('auth-config').onclick=async()=>{token=prompt('API bearer token (empty for loopback demo):','')||'';try{await api('/ready');message('API access verified. Token remains only in page memory.');}catch(error){message(error.message,'error');}};
+async function refreshStatus(){if(portable)return;try{const [ready,status]=await Promise.all([api('/ready'),api('/v1/status')]);$('backend').textContent='Healthy';$('connection').textContent='Local engine';$('connection-dot').className='online';$('device').textContent=ready.device.toUpperCase();$('model').textContent=ready.model_version;$('index-state').textContent=ready.reference_index_ready?'READY':'NOT LOADED';$('percentiles').textContent=status.latency_ms.p50==null?'—':`${status.latency_ms.p50.toFixed(1)} / ${status.latency_ms.p95.toFixed(1)} ms`;$('geometry').textContent=`${status.geometry.sample_rate/1000} kHz · ${status.geometry.window_s}s / ${status.geometry.hop_s}s`;if(ready.mode==='research'){$('mode').innerHTML='RESEARCH NEURAL<small>Frozen local models · uncalibrated scores</small>';document.querySelectorAll('.scenario').forEach(button=>button.disabled=true);}}catch(error){$('backend').textContent='Unavailable';$('connection').textContent='Backend unavailable';message(error.message,'error');}}
+window.addEventListener('resize',draw);$('context-risk').textContent=pct(contextScore(context()));if(portable){$('connection').textContent='Offline replay';$('connection-dot').className='online';$('backend').textContent='Offline fallback';$('mic').disabled=true;$('upload').disabled=true;$('auth-config').disabled=true;$('mode').innerHTML='OFFLINE REPLAY / FALLBACK DEMO<small>No model runs in this file</small>';message('Offline replay of captured API events. Use the local application for live audio.');}else{refreshStatus();setInterval(refreshStatus,5000);}draw();

@@ -20,6 +20,7 @@ class Settings:
     alpha: float = 0.70
     warning: float = 0.50
     alert: float = 0.75
+    critical: float = 0.90
     max_session_entries: int = 120
     max_call_s: int = 600
     idle_timeout_s: int = 60
@@ -43,6 +44,9 @@ class Settings:
     multi_rate: bool = False
     # AUD-04 bounded capture queue, in completed windows.
     capture_queue_windows: int = 8
+    # Common channel reliability mask. It can abstain when quality is unusable,
+    # but cannot turn poor audio into authenticity evidence in either direction.
+    channel_reliability: bool = True
 
     def __post_init__(self) -> None:
         if self.weight_preset not in ("equal", "proposed", "global_heavy", "session_heavy"):
@@ -59,7 +63,7 @@ class Settings:
             samples = getattr(self, name) * self.sample_rate
             if abs(samples - round(samples)) > 1e-9 or round(samples) < 1:
                 raise ValueError(f"{name} must be a positive whole number of samples at 16 kHz")
-        if not 0 <= self.alpha < 1 or not 0 < self.warning < self.alert <= 1:
+        if not 0 <= self.alpha < 1 or not 0 < self.warning < self.alert < self.critical <= 1:
             raise ValueError("Invalid EMA or alert thresholds")
         if not 0 < self.global_gate < 1 or not 0 < self.similarity_gate < 1:
             raise ValueError("Invalid bootstrap/update gate")

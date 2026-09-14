@@ -11,6 +11,20 @@ SCENARIOS = {
     "silence": "Silence / insufficient evidence",
 }
 
+# Presentation aliases remain procedural engineering fixtures. The attack onset
+# is known because the generator constructs it, not because STRIVE inferred it.
+PRESENTATION_SCENARIOS = {
+    "genuine": {"display_name": "Genuine Call", "engine_scenario": "steady",
+        "duration_s": 30.0, "attack_onset_sec": None,
+        "label": "DEMO / SYNTHETIC SCENARIO"},
+    "spoof": {"display_name": "Deepfake / Spoof Call", "engine_scenario": "suspicious_start",
+        "duration_s": 30.0, "attack_onset_sec": 0.0,
+        "label": "DEMO / SYNTHETIC SCENARIO"},
+    "mid_call": {"display_name": "Mid-Call Voice Replacement", "engine_scenario": "switch",
+        "duration_s": 30.0, "attack_onset_sec": 15.0,
+        "label": "DEMO / SYNTHETIC SCENARIO"},
+}
+
 
 def signal(family, seconds, seed=0, offset=0):
     rng = np.random.default_rng(seed)
@@ -43,6 +57,13 @@ def make_demo_index():
 
 
 def scenario_audio(name, seconds=40):
+    if name in PRESENTATION_SCENARIOS:
+        item = PRESENTATION_SCENARIOS[name]
+        seconds = int(item["duration_s"])
+        if name == "mid_call":
+            onset = int(item["attack_onset_sec"])
+            return np.r_[signal(0, onset, 103), signal(1, seconds - onset, 104, onset)]
+        name = item["engine_scenario"]
     if name not in SCENARIOS:
         raise ValueError("Unknown demo scenario")
     if name == "silence":

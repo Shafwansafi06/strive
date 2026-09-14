@@ -19,6 +19,7 @@ class Audit:
         keys = ("session_age_s", "s_risk", "context_risk", "decision_risk", "track_scores", "weights",
                 "alert_level", "recommended_action", "reasons", "model_version", "pipeline_version", "mode", "demo_only",
                 "latency_ms", "bootstrap", "status", "method")
+        keys = keys + ("outcome", "workflow", "hold_latched", "source")
         payload = {k: value[k] for k in keys if k in value}
         with self.lock:
             self.db.execute("INSERT INTO events(call_id,timestamp,kind,payload) VALUES(?,?,?,?)",

@@ -70,6 +70,8 @@ class ResearchExtractor:
         if cfg.profile_backend == "vox":
             require_file(root / "vox" / "spec.json")
         manifest = json.loads(manifest_path.read_text())
+        if manifest.get("input_samples") != self.window_samples:
+            raise ValueError("Model export input_samples differs from configured window geometry; re-export or restore window_s")
         self.pipeline_version = "research-v2-" + hashlib.sha256(
             (sha256(manifest_path) + cfg.profile_backend + "acoustic-62-v2").encode()).hexdigest()[:16]
         pinned = manifest.get("sha256", {})

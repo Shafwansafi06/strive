@@ -1,5 +1,5 @@
 {
-  "created_utc": "2026-09-14T19:49:52.883955+00:00",
+  "created_utc": "2026-09-14T20:16:18.782115+00:00",
   "scope": "Engineering fixtures only; not a detector accuracy evaluation",
   "python": "3.12.3",
   "platform": "Linux-7.0.0-31-generic-x86_64-with-glibc2.39",
@@ -11,8 +11,8 @@
       "profile_entries": 39,
       "first_warning_s": null,
       "first_alert_s": null,
-      "p50_ms": 25.316,
-      "p95_ms": 43.88600000000001
+      "p50_ms": 17.562,
+      "p95_ms": 22.919900000000005
     },
     "switch": {
       "windows": 39,
@@ -21,8 +21,8 @@
       "profile_entries": 17,
       "first_warning_s": 22.0,
       "first_alert_s": 36.0,
-      "p50_ms": 22.51,
-      "p95_ms": 38.211400000000005
+      "p50_ms": 23.509,
+      "p95_ms": 36.0571
     },
     "suspicious_start": {
       "windows": 39,
@@ -31,8 +31,8 @@
       "profile_entries": 0,
       "first_warning_s": 4.0,
       "first_alert_s": 8.0,
-      "p50_ms": 30.411,
-      "p95_ms": 62.35730000000001
+      "p50_ms": 21.285,
+      "p95_ms": 31.48060000000001
     },
     "silence": {
       "windows": 39,
@@ -41,8 +41,8 @@
       "profile_entries": 0,
       "first_warning_s": null,
       "first_alert_s": null,
-      "p50_ms": 2.047,
-      "p95_ms": 3.6599
+      "p50_ms": 1.017,
+      "p95_ms": 1.4180000000000004
     }
   },
   "neural_inference_tested": false,

@@ -56,13 +56,13 @@ const CHART = {
   minWidth: 300,
   gridlines: [0, 0.25, 0.5, 0.75, 1],
   colour: {
-    authenticity: "#23d2c3",
-    decision: "#4a8cff",
-    axis: "#8297ab",
-    grid: "#1b344d",
-    gridWarning: "#66522a",
-    gridAlert: "#713044",
-    onset: "#fff",
+    authenticity: "#e9b44c", // --trace-auth
+    decision: "#8b9dff", // --trace-decision
+    axis: "#5a616a", // --faint
+    grid: "#1a1e23",
+    gridWarning: "#4a3a12",
+    gridAlert: "#5d2130",
+    onset: "#eceef0", // --text
   },
 };
 
@@ -295,6 +295,8 @@ function resetView() {
   attackOnset = null;
   playbackDuration = DEFAULT_DURATION_S;
 
+  document.body.classList.remove("has-data");
+  $("reasons").dataset.signature = "";
   $("events").replaceChildren();
   logEvent("Ready for a new call", 0);
 
@@ -367,8 +369,25 @@ function normalizeEvent(event) {
  * Risk timeline chart
  * ========================================================================== */
 
-/** Redraw the risk timeline. Safe to call at any time; also bound to resize. */
+/**
+ * Coalesce redraws into one per animation frame.
+ *
+ * Events arrive faster than the display refreshes (up to 10/s during offline
+ * replay, plus a burst per resize). Painting synchronously on each one made
+ * the dashboard feel sluggish, so callers schedule instead of painting.
+ */
+let drawQueued = false;
 function draw() {
+  if (drawQueued) return;
+  drawQueued = true;
+  requestAnimationFrame(() => {
+    drawQueued = false;
+    paint();
+  });
+}
+
+/** Render the risk timeline. Call draw(); this is the frame-synced painter. */
+function paint() {
   const canvas = $("chart");
   const ratio = window.devicePixelRatio || 1;
   const { left, right, top, bottom } = CHART.padding;
@@ -377,11 +396,19 @@ function draw() {
   const width = w - left - right;
   const height = h - top - bottom;
 
-  canvas.width = w * ratio;
-  canvas.height = h * ratio;
+  // Assigning canvas.width reallocates the backing store, clears it and forces
+  // layout. Only pay that when the size actually changed; otherwise clear.
+  const pixelWidth = Math.round(w * ratio);
+  const pixelHeight = Math.round(h * ratio);
   const c = canvas.getContext("2d");
-  c.scale(ratio, ratio);
-  c.font = "10px system-ui";
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+    c.setTransform(ratio, 0, 0, ratio, 0, 0);
+  } else {
+    c.clearRect(0, 0, w, h);
+  }
+  c.font = "10px ui-monospace, monospace";
 
   // Gridlines, with the review and alert thresholds dashed and tinted.
   for (const value of CHART.gridlines) {
@@ -528,6 +555,11 @@ function renderEngineering(event) {
   const reasons = event.reasons?.length
     ? event.reasons
     : ["NO_CURRENT_ANOMALY"];
+  // Reason codes change rarely; rebuilding these nodes on every window was
+  // pure churn. Skip when the set matches what is already rendered.
+  const signature = reasons.join("|");
+  if ($("reasons").dataset.signature === signature) return;
+  $("reasons").dataset.signature = signature;
   $("reasons").replaceChildren(
     ...reasons.map((reason) => {
       const span = document.createElement("span");
@@ -591,6 +623,9 @@ function display(raw) {
   const event = normalizeEvent(raw);
   last = event;
   events.push(event);
+
+  // Clears the loading skeletons the first time real evidence lands.
+  document.body.classList.add("has-data");
 
   renderHeadline(event);
   renderBranches(event);
